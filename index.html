@@ -267,6 +267,8 @@
   }
   button.secondary:hover { background: #F0F1F4; }
   button.secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+  button.secondary.danger-text { color: var(--danger); border-color: var(--danger); }
+  button.secondary.danger-text:hover { background: var(--danger-bg); }
 
   .modal-overlay {
     position: fixed;
@@ -730,11 +732,12 @@ function AvailabilityDialog({ game, onClose, onSave, busy }) {
   );
 }
 
-function GameCard({ game, onOpenAvailability, onOpenGameDay }) {
+function GameCard({ game, role, onOpenAvailability, onOpenGameDay, onDelete }) {
   const unavailable = Object.entries(game.player_availability || {})
     .filter(([, v]) => v === false)
     .map(([name]) => name)
     .sort();
+  const canManage = role !== "team_manager";
 
   return (
     <div className={"game-card" + (game.is_bye ? " bye" : "")}>
@@ -753,12 +756,17 @@ function GameCard({ game, onOpenAvailability, onOpenGameDay }) {
           <div className="unavailable-line">Unavailable: {unavailable.join(", ")}</div>
         )}
       </div>
-      {!game.is_bye && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="secondary" onClick={() => onOpenAvailability(game)}>Availability</button>
-          <button className="secondary" onClick={() => onOpenGameDay(game)}>Open Game Day</button>
-        </div>
-      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {!game.is_bye && (
+          <React.Fragment>
+            <button className="secondary" onClick={() => onOpenAvailability(game)}>Availability</button>
+            <button className="secondary" onClick={() => onOpenGameDay(game)}>Open Game Day</button>
+          </React.Fragment>
+        )}
+        {canManage && (
+          <button className="secondary danger-text" onClick={() => onDelete(game)}>Delete</button>
+        )}
+      </div>
     </div>
   );
 }
@@ -981,6 +989,8 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
   const [dialogGame, setDialogGame] = useState(null);
   const [savingAvailability, setSavingAvailability] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1018,6 +1028,26 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
     setDialogGame(null);
   }
 
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setErrorMsg("");
+    // Clear any lingering edit lock for this game too, so a deleted game
+    // never leaves a stale lock row behind.
+    await db.from("game_locks")
+      .delete()
+      .eq("club_id", clubId)
+      .eq("season_name", deleteTarget.season_name)
+      .eq("round", deleteTarget.round)
+      .eq("opponent", deleteTarget.opponent);
+
+    const { error: deleteErr } = await db.from("games").delete().eq("id", deleteTarget.id);
+    setDeleting(false);
+    if (deleteErr) { setErrorMsg(deleteErr.message); return; }
+    setGames(prev => prev.filter(g => g.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -1047,7 +1077,16 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
         <div className="empty-note">No upcoming games for this season.</div>
       ) : (
         <div className="game-list">
-          {games.map(g => <GameCard key={g.id} game={g} onOpenAvailability={setDialogGame} onOpenGameDay={onOpenGameDay} />)}
+          {games.map(g => (
+            <GameCard
+              key={g.id}
+              game={g}
+              role={role}
+              onOpenAvailability={setDialogGame}
+              onOpenGameDay={onOpenGameDay}
+              onDelete={setDeleteTarget}
+            />
+          ))}
         </div>
       )}
 
@@ -1058,6 +1097,29 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
           onClose={() => setDialogGame(null)}
           onSave={saveAvailability}
         />
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Delete this game?</h2>
+            <div className="modal-subtitle">
+              Round {deleteTarget.round}{deleteTarget.is_bye ? " — BYE" : " vs " + deleteTarget.opponent}
+              — this permanently deletes the game and everything recorded on it. This can't be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto", background: "var(--danger)" }}
+                disabled={deleting}
+                onClick={confirmDelete}
+              >
+                {deleting ? "Deleting…" : "Delete Game"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1237,7 +1299,7 @@ function QuarterPanel({ q, notes, onNotesChange }) {
   );
 }
 
-function GameDayScreen({ gameId, clubId, coachId, onBack }) {
+function GameDayScreen({ gameId, clubId, coachId, role, onBack }) {
   const [loading, setLoading] = useState(true);
   const [lockState, setLockState] = useState("checking"); // checking | held | locked-by-other
   const [lockedByName, setLockedByName] = useState("");
@@ -1261,6 +1323,8 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
   const [uploadingFor, setUploadingFor] = useState(null);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1514,6 +1578,16 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
     onBack();
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    setErrorMsg("");
+    await releaseLock();
+    const { error: deleteErr } = await db.from("games").delete().eq("id", gameId);
+    setDeleting(false);
+    if (deleteErr) { setErrorMsg(deleteErr.message); return; }
+    onBack();
+  }
+
   if (loading) {
     return <div className="empty-note">Loading…</div>;
   }
@@ -1667,7 +1741,40 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
         >
           Submit Game
         </button>
+        {role !== "team_manager" && (
+          <button
+            className="secondary danger-text"
+            style={{ marginLeft: "auto" }}
+            disabled={saving || submitting || deleting}
+            onClick={() => setShowDeleteConfirm(true)}
+          >
+            Delete Game
+          </button>
+        )}
       </div>
+
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Delete this game?</h2>
+            <div className="modal-subtitle">
+              This permanently deletes Round {game.round} vs {game.opponent} and everything recorded on it
+              (positions, scores, POTM). This can't be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto", background: "var(--danger)" }}
+                disabled={deleting}
+                onClick={() => { setShowDeleteConfirm(false); handleDelete(); }}
+              >
+                {deleting ? "Deleting…" : "Delete Game"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSubmitConfirm && (
         <div className="modal-overlay" onClick={() => setShowSubmitConfirm(false)}>
@@ -2012,6 +2119,7 @@ function App() {
         gameId={gameDayId}
         clubId={profile.clubId}
         coachId={profile.id}
+        role={profile.role}
         onBack={() => goTo("planned-games")}
       />
     );
