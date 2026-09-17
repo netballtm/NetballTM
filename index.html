@@ -409,7 +409,15 @@
   .quarter-panel h3 { margin: 0 0 10px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
   .quarter-field { margin-bottom: 10px; }
   .quarter-field label { font-size: 12px; font-weight: 600; margin: 0 0 4px 0; }
-  .quarter-field input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 13px; }
+  .quarter-field input, .quarter-field textarea {
+    width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .quarter-field textarea { resize: vertical; }
   .quarter-field .muted-hint { color: var(--muted); font-size: 11.5px; }
 
   .gameday-actions {
@@ -1857,8 +1865,8 @@ function GameDayScreen({ gameId, clubId, coachId, role, backLabel, onBack }) {
                 <div className="potm-details">
                   <div className="quarter-field">
                     <label>Comment</label>
-                    <input
-                      type="text"
+                    <textarea
+                      rows={3}
                       value={potmComments[name] || ""}
                       onChange={e => updatePotmComment(name, e.target.value)}
                     />
