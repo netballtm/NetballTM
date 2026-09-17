@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NetballTM Web Hub</title>
+
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // Capture the Supabase UMD global immediately, before Babel standalone loads.
+  // IMPORTANT: never name a local variable "supabase" anywhere below (see project notes) —
+  // Babel standalone's own internals conflict with that global name and silently corrupt output.
+  window.__supabaseLib = window.supabase;
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+
+<style>
+  :root {
+    --accent: #3F51B5;
+    --accent-dark: #2C387E;
+    --bg: #F4F5F8;
+    --card: #FFFFFF;
+    --text: #1C1E21;
+    --muted: #6B7280;
+    --border: #E2E4E9;
+    --danger: #C0392B;
+    --danger-bg: #FDEDEC;
+    --success: #1E7B4D;
+    --success-bg: #EAF7EF;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  #root { min-height: 100vh; }
+  .center-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.05);
+  }
+  .card h1 {
+    font-size: 20px;
+    margin: 0 0 4px 0;
+    text-align: center;
+  }
+  .card .subtitle {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    margin-top: 16px;
+  }
+  input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button.primary {
+    width: 100%;
+    margin-top: 24px;
+    padding: 11px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
+  button.primary:hover:not(:disabled) { background: var(--accent-dark); }
+  .link-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 18px;
+    font-size: 13px;
+  }
+  .link-row a, .link-plain {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .link-row a:hover, .link-plain:hover { text-decoration: underline; }
+  .banner {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+  .banner.error { background: var(--danger-bg); color: var(--danger); }
+  .banner.info { background: var(--success-bg); color: var(--success); }
+
+  .topbar {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .topbar .who { display: flex; flex-direction: column; }
+  .topbar .club-name { font-weight: 700; font-size: 15px; }
+  .topbar .me { font-size: 12px; color: var(--muted); }
+  .role-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 100px;
+    background: #EDEEFB;
+    color: var(--accent-dark);
+    margin-left: 6px;
+  }
+  button.logout {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  button.logout:hover { background: #F0F1F4; }
+
+  .nav-grid {
+    max-width: 900px;
+    margin: 28px auto;
+    padding: 0 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .nav-tile {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 16px;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .nav-tile.enabled { cursor: pointer; }
+  .nav-tile.enabled:hover { border-color: var(--accent); }
+  .nav-tile.disabled { opacity: 0.55; cursor: not-allowed; }
+  .nav-tile .soon {
+    display: block;
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .section-label {
+    max-width: 900px;
+    margin: 24px auto 0 auto;
+    padding: 0 20px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .spinner-text {
+    color: var(--muted);
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+const SUPABASE_URL = "https://fkwoiaxmmjfegiltawkg.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrd29pYXhtbWpmZWdpbHRhd2tnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwNjQ3MjAsImV4cCI6MjA5NjY0MDcyMH0.0lAsh7avrfmp7Qy8LVXcanwUwI1IaNvYLfk61UuL734";
+
+// The Supabase client. Deliberately NOT named "supabase" (see the comment
+// in <head> — Babel standalone's own global conflicts with that name).
+const db = window.__supabaseLib.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function generateClubCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I to avoid confusion
+  let out = "";
+  for (let i = 0; i < 6; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
+
+function Banner({ error, info }) {
+  if (error) return <div className="banner error">{error}</div>;
+  if (info) return <div className="banner info">{info}</div>;
+  return null;
+}
+
+function AuthShell({ title, subtitle, children }) {
+  return (
+    <div className="center-screen">
+      <div className="card">
+        <h1>{title}</h1>
+        {subtitle && <div className="subtitle">{subtitle}</div>}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, onGoJoin, onGoCreate, onGoForgot, busy, error, info }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  return (
+    <AuthShell title="NetballTM" subtitle="Web Hub login">
+      <label>Email</label>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" />
+      <label>Password</label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
+      <Banner error={error} info={info} />
+      <button className="primary" disabled={busy || !email || !password} onClick={() => onLogin(email.trim(), password)}>
+        {busy ? "Logging in…" : "Log In"}
+      </button>
+      <div className="link-row">
+        <a onClick={onGoForgot}>Forgot password?</a>
+        <a onClick={onGoJoin}>Join a club</a>
+      </div>
+      <div className="link-row" style={{ justifyContent: "center" }}>
+        <a onClick={onGoCreate}>Create a new club</a>
+      </div>
+    </AuthShell>
+  );
+}
+
+function JoinScreen({ onJoin, onBack, busy, error, info }) {
+  const [clubCode, setClubCode] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const canSubmit = clubCode && displayName && email && password;
+  return (
+    <AuthShell title="Join a Club" subtitle="Enter the club code your admin gave you">
+      <label>Club Code</label>
+      <input value={clubCode} onChange={e => setClubCode(e.target.value)} placeholder="e.g. AB12CD" />
+      <label>Your Name</label>
+      <input value={displayName} onChange={e => setDisplayName(e.target.value)} />
+      <label>Email</label>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" />
+      <label>Password</label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+      <Banner error={error} info={info} />
+      <button className="primary" disabled={busy || !canSubmit} onClick={() => onJoin(email.trim(), password, displayName.trim(), clubCode.trim())}>
+        {busy ? "Joining…" : "Join Club"}
+      </button>
+      <div className="link-row" style={{ justifyContent: "center" }}>
+        <a onClick={onBack}>Back to login</a>
+      </div>
+    </AuthShell>
+  );
+}
+
+function CreateScreen({ onCreate, onBack, busy, error, info }) {
+  const [clubName, setClubName] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const canSubmit = clubName && displayName && email && password;
+  return (
+    <AuthShell title="Create a Club" subtitle="You'll be set up as the club's admin">
+      <label>Club Name</label>
+      <input value={clubName} onChange={e => setClubName(e.target.value)} />
+      <label>Your Name</label>
+      <input value={displayName} onChange={e => setDisplayName(e.target.value)} />
+      <label>Email</label>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" />
+      <label>Password</label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+      <Banner error={error} info={info} />
+      <button className="primary" disabled={busy || !canSubmit} onClick={() => onCreate(email.trim(), password, displayName.trim(), clubName.trim())}>
+        {busy ? "Creating…" : "Create Club"}
+      </button>
+      <div className="link-row" style={{ justifyContent: "center" }}>
+        <a onClick={onBack}>Back to login</a>
+      </div>
+    </AuthShell>
+  );
+}
+
+function ForgotScreen({ onSend, onBack, busy, error, info }) {
+  const [email, setEmail] = useState("");
+  return (
+    <AuthShell title="Reset Password" subtitle="We'll email you a reset link">
+      <label>Email</label>
+      <input type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" />
+      <Banner error={error} info={info} />
+      <button className="primary" disabled={busy || !email} onClick={() => onSend(email.trim())}>
+        {busy ? "Sending…" : "Send Reset Link"}
+      </button>
+      <div className="link-row" style={{ justifyContent: "center" }}>
+        <a onClick={onBack}>Back to login</a>
+      </div>
+    </AuthShell>
+  );
+}
+
+function ResetScreen({ onSetNew, busy, error, info }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const mismatch = confirm.length > 0 && password !== confirm;
+  return (
+    <AuthShell title="Set New Password" subtitle="Choose a new password for your account">
+      <label>New Password</label>
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" />
+      <label>Confirm Password</label>
+      <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} autoComplete="new-password" />
+      {mismatch && <div className="banner error">Passwords don't match.</div>}
+      <Banner error={error} info={info} />
+      <button className="primary" disabled={busy || !password || mismatch} onClick={() => onSetNew(password)}>
+        {busy ? "Saving…" : "Set New Password"}
+      </button>
+    </AuthShell>
+  );
+}
+
+function NavTile({ label, enabled, onClick }) {
+  return (
+    <div className={"nav-tile " + (enabled ? "enabled" : "disabled")} onClick={enabled ? onClick : undefined}>
+      {label}
+      {!enabled && <span className="soon">Coming soon</span>}
+    </div>
+  );
+}
+
+function HomeScreen({ profile, onLogout }) {
+  const isAdmin = profile.role === "admin";
+  const isTeamManager = profile.role === "team_manager";
+
+  // Mirrors the Android app's role gating (see Permission levels / roles
+  // section of the project knowledge doc): team_manager gets Game Day +
+  // Training + history views only; Reports/Stats/Registration/Evaluations
+  // and Club Settings/Manage Coaches stay hidden. Nothing here is wired up
+  // yet (Phase 1 is just the login/role foundation) — every tile is a
+  // placeholder until its phase is built.
+  return (
+    <div>
+      <div className="topbar">
+        <div className="who">
+          <span className="club-name">{profile.clubName || "Your Club"}</span>
+          <span className="me">
+            {profile.displayName || profile.email}
+            <span className="role-badge">{profile.role}</span>
+          </span>
+        </div>
+        <button className="logout" onClick={onLogout}>Log Out</button>
+      </div>
+
+      <div className="section-label">Game Day</div>
+      <div className="nav-grid">
+        <NavTile label="Game Day" enabled={false} />
+        <NavTile label="Upcoming Games" enabled={false} />
+        <NavTile label="Game History" enabled={false} />
+      </div>
+
+      <div className="section-label">Training</div>
+      <div className="nav-grid">
+        <NavTile label="Training Attendance" enabled={false} />
+        <NavTile label="Training History" enabled={false} />
+      </div>
+
+      {!isTeamManager && (
+        <React.Fragment>
+          <div className="section-label">Reports &amp; Admin</div>
+          <div className="nav-grid">
+            <NavTile label="Registration" enabled={false} />
+            <NavTile label="Stats" enabled={false} />
+            <NavTile label="Reports" enabled={false} />
+            <NavTile label="Player Evaluations" enabled={false} />
+          </div>
+        </React.Fragment>
+      )}
+
+      {isAdmin && (
+        <React.Fragment>
+          <div className="section-label">Club Admin</div>
+          <div className="nav-grid">
+            <NavTile label="Club Settings" enabled={false} />
+            <NavTile label="Manage Coaches" enabled={false} />
+            <NavTile label="Load Teams &amp; Players" enabled={false} />
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [screen, setScreen] = useState("loading");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [profile, setProfile] = useState(null);
+
+  const clearMessages = () => { setError(""); setInfo(""); };
+
+  const loadCoachProfile = useCallback(async (user) => {
+    const { data, error: fetchErr } = await db
+      .from("coaches")
+      .select("*")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (fetchErr || !data) {
+      await db.auth.signOut();
+      setError("Could not find your coach profile. Please contact your club admin.");
+      setScreen("login");
+      return;
+    }
+
+    setProfile({
+      id: user.id,
+      email: user.email,
+      displayName: data.display_name,
+      clubId: data.club_id,
+      clubName: data.club_name,
+      role: data.role || "coach",
+    });
+    setScreen("home");
+  }, []);
+
+  useEffect(() => {
+    const { data: authListener } = db.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        clearMessages();
+        setScreen("reset");
+      }
+    });
+
+    (async () => {
+      const { data: { session } } = await db.auth.getSession();
+      if (session && session.user) {
+        await loadCoachProfile(session.user);
+      } else {
+        setScreen("login");
+      }
+    })();
+
+    return () => {
+      authListener && authListener.subscription && authListener.subscription.unsubscribe();
+    };
+  }, [loadCoachProfile]);
+
+  async function handleLogin(email, password) {
+    clearMessages(); setBusy(true);
+    const { data, error: loginErr } = await db.auth.signInWithPassword({ email, password });
+    if (loginErr) { setError(loginErr.message); setBusy(false); return; }
+    await loadCoachProfile(data.user);
+    setBusy(false);
+  }
+
+  async function handleJoin(email, password, displayName, clubCodeRaw) {
+    clearMessages(); setBusy(true);
+    try {
+      const code = clubCodeRaw.toUpperCase();
+      const { data: club, error: clubErr } = await db.from("clubs").select("*").eq("code", code).maybeSingle();
+      if (clubErr || !club) {
+        setError("Club code not found. Double-check it with your club admin.");
+        setBusy(false);
+        return;
+      }
+
+      // Same pattern as the Android app's JOIN_CLUB flow: try signing in
+      // first in case the account already exists, only sign up if that fails.
+      let user = null;
+      const signInRes = await db.auth.signInWithPassword({ email, password });
+      if (signInRes.error) {
+        const signUpRes = await db.auth.signUp({ email, password });
+        if (signUpRes.error) { setError(signUpRes.error.message); setBusy(false); return; }
+        user = signUpRes.data.user;
+      } else {
+        user = signInRes.data.user;
+      }
+      if (!user) {
+        setError("Could not create your account. Please try again.");
+        setBusy(false);
+        return;
+      }
+
+      // Role is always sent as "coach" here — self-service joining never
+      // grants admin or team_manager. An admin promotes/demotes afterwards
+      // via Manage Coaches.
+      const { error: upsertErr } = await db.from("coaches").upsert({
+        id: user.id,
+        email,
+        display_name: displayName,
+        club_name: club.name,
+        club_id: club.id,
+        role: "coach",
+      });
+      if (upsertErr) {
+        setError("Joined but could not save your profile: " + upsertErr.message);
+        setBusy(false);
+        return;
+      }
+      await loadCoachProfile(user);
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  }
+
+  async function handleCreate(email, password, displayName, clubName) {
+    clearMessages(); setBusy(true);
+    try {
+      const signUpRes = await db.auth.signUp({ email, password });
+      if (signUpRes.error) { setError(signUpRes.error.message); setBusy(false); return; }
+      const user = signUpRes.data.user;
+      if (!user) {
+        setError("Account created, but could not finish setup automatically. Please try logging in.");
+        setBusy(false);
+        return;
+      }
+
+      const code = generateClubCode();
+      const { data: club, error: clubErr } = await db.from("clubs").insert({
+        name: clubName, code, created_by: user.id,
+      }).select().single();
+      if (clubErr) {
+        setError("Could not create club: " + clubErr.message);
+        setBusy(false);
+        return;
+      }
+
+      const { error: coachErr } = await db.from("coaches").upsert({
+        id: user.id,
+        email,
+        display_name: displayName,
+        club_name: club.name,
+        club_id: club.id,
+        role: "admin",
+      });
+      if (coachErr) {
+        setError("Club created but could not save your profile: " + coachErr.message);
+        setBusy(false);
+        return;
+      }
+
+      setInfo(`Club created! Your club code is ${code} — share this with your other coaches so they can join.`);
+      await loadCoachProfile(user);
+    } catch (e) {
+      setError(String(e));
+    }
+    setBusy(false);
+  }
+
+  async function handleForgot(email) {
+    clearMessages(); setBusy(true);
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error: forgotErr } = await db.auth.resetPasswordForEmail(email, { redirectTo });
+    if (forgotErr) setError(forgotErr.message);
+    else setInfo("Check your email for a password reset link.");
+    setBusy(false);
+  }
+
+  async function handleSetNewPassword(newPassword) {
+    clearMessages(); setBusy(true);
+    const { error: updateErr } = await db.auth.updateUser({ password: newPassword });
+    if (updateErr) { setError(updateErr.message); setBusy(false); return; }
+    await db.auth.signOut();
+    setInfo("Password updated — you can now log in.");
+    setScreen("login");
+    setBusy(false);
+  }
+
+  async function handleLogout() {
+    await db.auth.signOut();
+    setProfile(null);
+    clearMessages();
+    setScreen("login");
+  }
+
+  function goTo(next) {
+    clearMessages();
+    setScreen(next);
+  }
+
+  if (screen === "loading") {
+    return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
+  }
+  if (screen === "login") {
+    return <LoginScreen onLogin={handleLogin} onGoJoin={() => goTo("join")} onGoCreate={() => goTo("create")} onGoForgot={() => goTo("forgot")} busy={busy} error={error} info={info} />;
+  }
+  if (screen === "join") {
+    return <JoinScreen onJoin={handleJoin} onBack={() => goTo("login")} busy={busy} error={error} info={info} />;
+  }
+  if (screen === "create") {
+    return <CreateScreen onCreate={handleCreate} onBack={() => goTo("login")} busy={busy} error={error} info={info} />;
+  }
+  if (screen === "forgot") {
+    return <ForgotScreen onSend={handleForgot} onBack={() => goTo("login")} busy={busy} error={error} info={info} />;
+  }
+  if (screen === "reset") {
+    return <ResetScreen onSetNew={handleSetNewPassword} busy={busy} error={error} info={info} />;
+  }
+  if (screen === "home" && profile) {
+    return <HomeScreen profile={profile} onLogout={handleLogout} />;
+  }
+  return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
