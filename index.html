@@ -476,6 +476,25 @@
   }
   .court-slot .slot-player { font-size: 14.5px; font-weight: 600; margin-top: 5px; }
   .court-slot .slot-empty { font-size: 13px; color: var(--muted); margin-top: 5px; }
+  .slot-goal { margin-top: 8px; cursor: default; }
+  .slot-goal label {
+    display: block;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0 0 3px 0;
+    font-weight: 600;
+  }
+  .slot-goal input {
+    width: 56px;
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    text-align: center;
+    font-weight: 700;
+  }
 
   .bench-wrap { max-width: 1000px; margin: 16px auto 0 auto; padding: 0 20px; }
   .bench-wrap h4 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
@@ -1074,7 +1093,7 @@ function PlayerPickerModal({ slotCode, currentPlayer, benchPlayers, onPick, onCl
   );
 }
 
-function CourtView({ q, players, positions, onAssign, onClearSlot, onToggleBench }) {
+function CourtView({ q, players, positions, goals, onAssign, onClearSlot, onToggleBench, onGoalChange }) {
   const [openSlot, setOpenSlot] = useState(null);
   const qPositions = positions[q] || {};
 
@@ -1106,7 +1125,19 @@ function CourtView({ q, players, positions, onAssign, onClearSlot, onToggleBench
                   >
                     <div className="slot-code">{code}</div>
                     {playerName ? (
-                      <div className="slot-player">{playerName}</div>
+                      <React.Fragment>
+                        <div className="slot-player">{playerName}</div>
+                        {(code === "GS" || code === "GA") && (
+                          <div className="slot-goal" onClick={e => e.stopPropagation()}>
+                            <label>Goals</label>
+                            <input
+                              type="number" min="0"
+                              value={(goals[q] && goals[q][playerName]) || 0}
+                              onChange={e => onGoalChange(q, playerName, parseInt(e.target.value, 10) || 0)}
+                            />
+                          </div>
+                        )}
+                      </React.Fragment>
                     ) : (
                       <div className="slot-empty">Tap to assign</div>
                     )}
@@ -1148,28 +1179,11 @@ function CourtView({ q, players, positions, onAssign, onClearSlot, onToggleBench
   );
 }
 
-function QuarterPanel({ q, players, positions, goals, notes, onGoalChange, onNotesChange }) {
-  const shooters = players.filter(name => {
-    const code = positions[q] && positions[q][name];
-    return code === "GS" || code === "GA";
-  });
+function QuarterPanel({ q, notes, onNotesChange }) {
   return (
     <div className="quarter-panel">
-      <h3>Quarter {q}</h3>
-      {shooters.length === 0 ? (
-        <div className="quarter-field"><span className="muted-hint">Assign GS/GA above to record goals.</span></div>
-      ) : shooters.map(name => (
-        <div className="quarter-field" key={name}>
-          <label>{name} goals</label>
-          <input
-            type="number" min="0"
-            value={(goals[q] && goals[q][name]) || 0}
-            onChange={e => onGoalChange(q, name, parseInt(e.target.value, 10) || 0)}
-          />
-        </div>
-      ))}
       <div className="quarter-field">
-        <label>Notes (optional)</label>
+        <label>Quarter {q} notes (optional)</label>
         <input type="text" value={notes[q] || ""} onChange={e => onNotesChange(q, e.target.value)} />
       </div>
     </div>
@@ -1474,19 +1488,17 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
         q={activeQuarter}
         players={players}
         positions={positions}
+        goals={goals}
         onAssign={assignSlot}
         onClearSlot={clearSlot}
         onToggleBench={toggleBenchStatus}
+        onGoalChange={updateGoal}
       />
 
       <div className="quarter-panel-single">
         <QuarterPanel
           q={activeQuarter}
-          players={players}
-          positions={positions}
-          goals={goals}
           notes={notes}
-          onGoalChange={updateGoal}
           onNotesChange={updateNotes}
         />
       </div>
