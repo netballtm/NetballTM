@@ -511,6 +511,20 @@
   .bench-chip.nap { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 
   .quarter-panel-single { max-width: 480px; margin: 20px auto 0 auto; padding: 0 20px; }
+
+  .potm-section { max-width: 480px; margin: 20px auto 0 auto; padding: 0 20px; }
+  .potm-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin: 0 0 10px 0; }
+  .potm-row {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .potm-checkbox { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .potm-checkbox input { width: auto; }
+  .potm-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .potm-photo-preview { width: 100%; max-width: 200px; border-radius: 8px; margin-top: 8px; display: block; }
 </style>
 </head>
 <body>
@@ -1064,6 +1078,39 @@ const POSITION_LABELS = {
 // project notes) — a lock older than this is treated as abandoned.
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
+// Same convention as the Android app's PotmPhotoStorage: shrink to a 1280px
+// longest edge and re-encode as JPEG @ 80% before uploading, so a phone
+// photo taken straight from the browser's file picker doesn't land in
+// Supabase Storage at full multi-MB camera resolution.
+function compressPhotoFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Could not read that image."));
+      img.onload = () => {
+        const maxDim = 1280;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        canvas.toBlob(blob => {
+          if (blob) resolve(blob);
+          else reject(new Error("Could not process that image."));
+        }, "image/jpeg", 0.8);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function PlayerPickerModal({ slotCode, currentPlayer, benchPlayers, onPick, onClear, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -1207,6 +1254,14 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
   const [notes, setNotes] = useState({ "1": "", "2": "", "3": "", "4": "" });
   const [activeQuarter, setActiveQuarter] = useState("1");
 
+  const [potm, setPotm] = useState([]);
+  const [potmComments, setPotmComments] = useState({});
+  const [potmPhotos, setPotmPhotos] = useState({});
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState({});
+  const [uploadingFor, setUploadingFor] = useState(null);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1305,6 +1360,21 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
       setOppGoals(nextOppGoals);
       setTurnovers(nextTurnovers);
       setNotes(nextNotes);
+      setPotm(gameRow.players_of_match || []);
+      setPotmComments(gameRow.potm_comments || {});
+      setPotmPhotos(gameRow.potm_photos || {});
+
+      const storedPhotos = gameRow.potm_photos || {};
+      const photoEntries = Object.entries(storedPhotos);
+      if (photoEntries.length > 0) {
+        const urls = {};
+        await Promise.all(photoEntries.map(async ([name, path]) => {
+          const { data: signed } = await db.storage.from("potm-photos").createSignedUrl(path, 3600);
+          if (signed && signed.signedUrl) urls[name] = signed.signedUrl;
+        }));
+        if (!cancelled) setPhotoPreviewUrls(urls);
+      }
+
       setLockState("held");
       setLoading(false);
     })();
@@ -1346,6 +1416,29 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
     setNotes(prev => ({ ...prev, [q]: value }));
   }
 
+  function togglePotm(name) {
+    setPotm(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  }
+  function updatePotmComment(name, text) {
+    setPotmComments(prev => ({ ...prev, [name]: text }));
+  }
+  async function handlePhotoSelected(name, file) {
+    if (!file) return;
+    setUploadingFor(name);
+    setErrorMsg("");
+    try {
+      const blob = await compressPhotoFile(file);
+      const path = "potm/" + Date.now() + "_" + Math.floor(Math.random() * 100000) + ".jpg";
+      const { error: uploadErr } = await db.storage.from("potm-photos").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (uploadErr) { setErrorMsg(uploadErr.message); setUploadingFor(null); return; }
+      setPotmPhotos(prev => ({ ...prev, [name]: path }));
+      setPhotoPreviewUrls(prev => ({ ...prev, [name]: URL.createObjectURL(blob) }));
+    } catch (e) {
+      setErrorMsg((e && e.message) || String(e));
+    }
+    setUploadingFor(null);
+  }
+
   async function releaseLock() {
     if (!game) return;
     await db.from("game_locks")
@@ -1362,11 +1455,7 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
     onBack();
   }
 
-  async function handleSaveDraft() {
-    setSaving(true);
-    setErrorMsg("");
-    setInfoMsg("");
-
+  function buildSavePayload(extra) {
     let ourScore = 0;
     let opponentScore = 0;
     const cleanGoals = {};
@@ -1387,19 +1476,42 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
       if (notes[q] && notes[q].trim()) cleanNotes[q] = notes[q].trim();
     });
 
-    const { error: updateErr } = await db.from("games").update({
+    return Object.assign({
       positions_by_quarter: positions,
       goals_by_quarter: cleanGoals,
       opponent_goals_by_quarter: cleanOppGoals,
       turnovers_by_quarter: cleanTurnovers,
       quarter_notes: cleanNotes,
+      players_of_match: potm,
+      potm_comments: potmComments,
+      potm_photos: potmPhotos,
       our_score: ourScore,
       opponent_score: opponentScore,
-    }).eq("id", gameId);
+    }, extra || {});
+  }
+
+  async function handleSaveDraft() {
+    setSaving(true);
+    setErrorMsg("");
+    setInfoMsg("");
+
+    const { error: updateErr } = await db.from("games").update(buildSavePayload()).eq("id", gameId);
 
     setSaving(false);
     if (updateErr) { setErrorMsg(updateErr.message); return; }
-    setInfoMsg("Draft saved.");
+    setInfoMsg("Saved.");
+  }
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    setErrorMsg("");
+
+    const { error: updateErr } = await db.from("games").update(buildSavePayload({ is_completed: true })).eq("id", gameId);
+    if (updateErr) { setErrorMsg(updateErr.message); setSubmitting(false); return; }
+
+    await releaseLock();
+    setSubmitting(false);
+    onBack();
   }
 
   if (loading) {
@@ -1503,12 +1615,83 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
         />
       </div>
 
+      <div className="potm-section">
+        <h3>Player of the Match</h3>
+        {players.map(name => {
+          const isSelected = potm.indexOf(name) !== -1;
+          return (
+            <div className="potm-row" key={name}>
+              <label className="potm-checkbox">
+                <input type="checkbox" checked={isSelected} onChange={() => togglePotm(name)} />
+                <span>{name}</span>
+              </label>
+              {isSelected && (
+                <div className="potm-details">
+                  <div className="quarter-field">
+                    <label>Comment</label>
+                    <input
+                      type="text"
+                      value={potmComments[name] || ""}
+                      onChange={e => updatePotmComment(name, e.target.value)}
+                    />
+                  </div>
+                  <div className="quarter-field">
+                    <label>Photo</label>
+                    <input
+                      type="file" accept="image/*"
+                      disabled={uploadingFor === name}
+                      onChange={e => handlePhotoSelected(name, e.target.files && e.target.files[0])}
+                    />
+                    {uploadingFor === name && <div className="muted-hint">Uploading…</div>}
+                    {photoPreviewUrls[name] && (
+                      <img src={photoPreviewUrls[name]} alt={name + " photo"} className="potm-photo-preview" />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
       <div className="gameday-actions">
-        <button className="secondary" onClick={handleBack} disabled={saving}>Back</button>
-        <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving} onClick={handleSaveDraft}>
+        <button className="secondary" onClick={handleBack} disabled={saving || submitting}>Back</button>
+        <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving || submitting} onClick={handleSaveDraft}>
           {saving ? "Saving…" : "Save"}
         </button>
+        <button
+          className="primary"
+          style={{ marginTop: 0, width: "auto", background: "var(--success)" }}
+          disabled={saving || submitting}
+          onClick={() => setShowSubmitConfirm(true)}
+        >
+          Submit Game
+        </button>
       </div>
+
+      {showSubmitConfirm && (
+        <div className="modal-overlay" onClick={() => setShowSubmitConfirm(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Submit this game?</h2>
+            <div className="modal-subtitle">
+              This marks the game as complete and takes it off Upcoming Games. Game History (to review or
+              re-edit a completed game from the web hub) isn't built yet — for now, use the Android app if
+              you need to change anything after submitting.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setShowSubmitConfirm(false)}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto" }}
+                disabled={submitting}
+                onClick={() => { setShowSubmitConfirm(false); handleSubmit(); }}
+              >
+                {submitting ? "Submitting…" : "Submit Game"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
