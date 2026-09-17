@@ -247,6 +247,21 @@
   .game-card .round-line { font-weight: 700; font-size: 14px; }
   .game-card .meta-line { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
   .game-card .unavailable-line { color: #B45309; font-size: 12.5px; margin-top: 4px; }
+  .result-badge {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .result-badge.win { background: var(--success-bg); color: var(--success); }
+  .result-badge.loss { background: var(--danger-bg); color: var(--danger); }
+  .result-badge.draw { background: #FFF4E0; color: #B45309; }
+  .result-badge.bye { background: #F0F1F4; color: var(--muted); }
   .empty-note {
     max-width: 900px;
     margin: 0 auto;
@@ -1125,6 +1140,145 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
   );
 }
 
+function HistoryGameCard({ game, role, onOpen, onDelete }) {
+  let resultLabel = "BYE";
+  let resultClass = "bye";
+  if (!game.is_bye) {
+    if (game.our_score > game.opponent_score) { resultLabel = "W"; resultClass = "win"; }
+    else if (game.our_score < game.opponent_score) { resultLabel = "L"; resultClass = "loss"; }
+    else { resultLabel = "D"; resultClass = "draw"; }
+  }
+
+  return (
+    <div className="game-card">
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div className={"result-badge " + resultClass}>{resultLabel}</div>
+        <div>
+          <div className="round-line">
+            Round {game.round}{game.is_bye ? " — BYE" : " vs " + game.opponent}
+          </div>
+          {!game.is_bye && (
+            <div className="meta-line">
+              {game.our_score} - {game.opponent_score}
+              {game.game_date ? " · " + game.game_date : ""}
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {!game.is_bye && (
+          <button className="secondary" onClick={() => onOpen(game)}>View / Edit</button>
+        )}
+        {role !== "team_manager" && (
+          <button className="secondary danger-text" onClick={() => onDelete(game)}>Delete</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GameHistoryScreen({ clubId, role, onBack, onOpenGameDay }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [games, setGames] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: seasonsErr } = await db.from("seasons").select("*").eq("club_id", clubId);
+      if (seasonsErr) { setErrorMsg(seasonsErr.message); setLoading(false); return; }
+      setSeasons(data || []);
+      if (data && data.length > 0) setSeasonName(data[0].name);
+      else setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadGames = useCallback(async () => {
+    if (!seasonName) return;
+    setLoading(true);
+    const { data, error: gamesErr } = await db
+      .from("games")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season_name", seasonName)
+      .eq("is_completed", true)
+      .order("round", { ascending: false });
+    if (gamesErr) setErrorMsg(gamesErr.message);
+    else setGames(data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { loadGames(); }, [loadGames]);
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setErrorMsg("");
+    const { error: deleteErr } = await db.from("games").delete().eq("id", deleteTarget.id);
+    setDeleting(false);
+    if (deleteErr) { setErrorMsg(deleteErr.message); return; }
+    setGames(prev => prev.filter(g => g.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Game History</h1>
+      </div>
+
+      {seasons.length > 1 && (
+        <div className="season-select-row">
+          <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : games.length === 0 ? (
+        <div className="empty-note">No completed games for this season yet.</div>
+      ) : (
+        <div className="game-list">
+          {games.map(g => (
+            <HistoryGameCard key={g.id} game={g} role={role} onOpen={onOpenGameDay} onDelete={setDeleteTarget} />
+          ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Delete this game?</h2>
+            <div className="modal-subtitle">
+              Round {deleteTarget.round}{deleteTarget.is_bye ? " — BYE" : " vs " + deleteTarget.opponent}
+              — this permanently deletes the game and everything recorded on it. This can't be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto", background: "var(--danger)" }}
+                disabled={deleting}
+                onClick={confirmDelete}
+              >
+                {deleting ? "Deleting…" : "Delete Game"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const QUARTERS = ["1", "2", "3", "4"];
 const COURT_ZONES = [
   { title: "Attack", codes: ["GS", "GA"] },
@@ -1299,7 +1453,7 @@ function QuarterPanel({ q, notes, onNotesChange }) {
   );
 }
 
-function GameDayScreen({ gameId, clubId, coachId, role, onBack }) {
+function GameDayScreen({ gameId, clubId, coachId, role, backLabel, onBack }) {
   const [loading, setLoading] = useState(true);
   const [lockState, setLockState] = useState("checking"); // checking | held | locked-by-other
   const [lockedByName, setLockedByName] = useState("");
@@ -1619,7 +1773,7 @@ function GameDayScreen({ gameId, clubId, coachId, role, onBack }) {
   return (
     <div>
       <div className="page-header">
-        <a className="back-link" onClick={handleBack}>&larr; Back to Upcoming Games</a>
+        <a className="back-link" onClick={handleBack}>&larr; Back to {backLabel || "Upcoming Games"}</a>
         <h1 className="page-title">Round {game.round} vs {game.opponent}</h1>
       </div>
 
@@ -1733,14 +1887,20 @@ function GameDayScreen({ gameId, clubId, coachId, role, onBack }) {
         <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving || submitting} onClick={handleSaveDraft}>
           {saving ? "Saving…" : "Save"}
         </button>
-        <button
-          className="primary"
-          style={{ marginTop: 0, width: "auto", background: "var(--success)" }}
-          disabled={saving || submitting}
-          onClick={() => setShowSubmitConfirm(true)}
-        >
-          Submit Game
-        </button>
+        {game.is_completed ? (
+          <span style={{ color: "var(--success)", fontWeight: 600, fontSize: 13.5, alignSelf: "center" }}>
+            ✓ Completed
+          </span>
+        ) : (
+          <button
+            className="primary"
+            style={{ marginTop: 0, width: "auto", background: "var(--success)" }}
+            disabled={saving || submitting}
+            onClick={() => setShowSubmitConfirm(true)}
+          >
+            Submit Game
+          </button>
+        )}
         {role !== "team_manager" && (
           <button
             className="secondary danger-text"
@@ -1839,7 +1999,7 @@ function HomeScreen({ profile, onLogout, onNavigate }) {
       <div className="nav-grid">
         <NavTile label="Game Day" enabled={true} onClick={() => onNavigate("planned-games")} />
         <NavTile label="Upcoming Games" enabled={true} onClick={() => onNavigate("planned-games")} />
-        <NavTile label="Game History" enabled={false} />
+        <NavTile label="Game History" enabled={true} onClick={() => onNavigate("game-history")} />
       </div>
 
       <div className="section-label">Training</div>
@@ -1881,6 +2041,7 @@ function App() {
   const [info, setInfo] = useState("");
   const [profile, setProfile] = useState(null);
   const [gameDayId, setGameDayId] = useState(null);
+  const [gameDayReturnTo, setGameDayReturnTo] = useState("planned-games");
 
   const clearMessages = () => { setError(""); setInfo(""); };
 
@@ -2092,8 +2253,18 @@ function App() {
         clubId={profile.clubId}
         role={profile.role}
         onBack={() => goTo("home")}
-        onOpenGameDay={g => { setGameDayId(g.id); goTo("game-day"); }}
+        onOpenGameDay={g => { setGameDayId(g.id); setGameDayReturnTo("planned-games"); goTo("game-day"); }}
         onCreateGame={() => goTo("create-game")}
+      />
+    );
+  }
+  if (screen === "game-history" && profile) {
+    return (
+      <GameHistoryScreen
+        clubId={profile.clubId}
+        role={profile.role}
+        onBack={() => goTo("home")}
+        onOpenGameDay={g => { setGameDayId(g.id); setGameDayReturnTo("game-history"); goTo("game-day"); }}
       />
     );
   }
@@ -2120,7 +2291,8 @@ function App() {
         clubId={profile.clubId}
         coachId={profile.id}
         role={profile.role}
-        onBack={() => goTo("planned-games")}
+        backLabel={gameDayReturnTo === "game-history" ? "Game History" : "Upcoming Games"}
+        onBack={() => goTo(gameDayReturnTo)}
       />
     );
   }
