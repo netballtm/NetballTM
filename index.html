@@ -550,6 +550,57 @@
   .potm-checkbox input { width: auto; }
   .potm-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
   .potm-photo-preview { width: 100%; max-width: 200px; border-radius: 8px; margin-top: 8px; display: block; }
+
+  .status-pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 100px;
+    margin-left: 8px;
+  }
+  .status-pill.cancelled { background: var(--danger-bg); color: var(--danger); }
+  .status-pill.note { background: #F0F1F4; color: var(--muted); text-transform: none; font-weight: 600; }
+
+  .session-form { max-width: 480px; margin: 20px auto 0 auto; padding: 0 20px; }
+  .session-field { margin-bottom: 16px; }
+  .session-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .session-field input[type="text"],
+  .session-field input[type="date"],
+  .session-field textarea,
+  .session-field select {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--text);
+  }
+  .session-field textarea { resize: vertical; }
+  .session-field .muted-hint { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+
+  .attendance-section { max-width: 480px; margin: 4px auto 0 auto; padding: 0 20px; }
+  .attendance-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin: 20px 0 10px 0; }
+  .attendance-block { padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .attendance-block:last-child { border-bottom: none; }
+  .attendance-toggle-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+  .attendance-reason { margin-top: 8px; }
+  .attendance-reason label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .attendance-reason input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+
+  .session-actions { max-width: 480px; margin: 24px auto 40px auto; padding: 0 20px; display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+  .session-summary-row { max-width: 900px; margin: 16px auto 0 auto; padding: 0 20px; display: flex; gap: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -1980,16 +2031,461 @@ function NavTile({ label, enabled, onClick }) {
   );
 }
 
-function HomeScreen({ profile, onLogout, onNavigate }) {
+function formatSessionDate(millis) {
+  return new Date(millis).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
+// Builds a YYYY-MM-DD string from LOCAL date components (never toISOString,
+// which converts to UTC first — for a club in Australia that silently rolls
+// the displayed date back a day for part of the evening/early morning).
+function toDateInputValue(millis) {
+  const d = new Date(millis);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function AttendanceRow({ name, present, reason, onToggle, onReasonChange }) {
+  return (
+    <div className="attendance-block">
+      <div className="attendance-toggle-row">
+        <span>{name}</span>
+        <label className="toggle-switch">
+          <input type="checkbox" checked={!!present} onChange={onToggle} />
+          <span className="toggle-slider"></span>
+        </label>
+      </div>
+      {!present && (
+        <div className="attendance-reason">
+          <label>Reason (optional)</label>
+          <input
+            type="text"
+            value={reason || ""}
+            onChange={e => onReasonChange(e.target.value)}
+            placeholder="e.g. Unavailable, injured, other commitment"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrainingSessionCard({ session, role, onOpen, onDelete }) {
+  const canManage = role !== "team_manager";
+  const attendanceEntries = Object.entries(session.attendance || {});
+  const presentCount = attendanceEntries.filter(([, v]) => v === true).length;
+  const totalCount = attendanceEntries.length;
+
+  return (
+    <div className={"game-card" + (session.is_cancelled ? " bye" : "")}>
+      <div>
+        <div className="round-line">
+          {formatSessionDate(session.date_millis)}
+          {session.is_cancelled && <span className="status-pill cancelled">Cancelled</span>}
+          {session.notes && session.notes.trim() && <span className="status-pill note">Note</span>}
+        </div>
+        {session.is_cancelled ? (
+          <div className="meta-line">{session.cancellation_reason || "No reason given"}</div>
+        ) : (
+          <div className="meta-line">
+            {totalCount > 0 ? `${presentCount}/${totalCount} present` : "Attendance not recorded yet"}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="secondary" onClick={() => onOpen(session)}>View / Edit</button>
+        {canManage && (
+          <button className="secondary danger-text" onClick={() => onDelete(session)}>Delete</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TrainingHistoryScreen({ clubId, role, onBack, onNewSession, onOpenSession }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: seasonsErr } = await db.from("seasons").select("*").eq("club_id", clubId);
+      if (seasonsErr) { setErrorMsg(seasonsErr.message); setLoading(false); return; }
+      setSeasons(data || []);
+      if (data && data.length > 0) setSeasonName(data[0].name);
+      else setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadSessions = useCallback(async () => {
+    if (!seasonName) return;
+    setLoading(true);
+    const { data, error: sessionsErr } = await db
+      .from("training_sessions")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season", seasonName)
+      .order("date_millis", { ascending: false });
+    if (sessionsErr) setErrorMsg(sessionsErr.message);
+    else setSessions(data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setErrorMsg("");
+    const { error: deleteErr } = await db.from("training_sessions").delete().eq("id", deleteTarget.id);
+    setDeleting(false);
+    if (deleteErr) { setErrorMsg(deleteErr.message); return; }
+    setSessions(prev => prev.filter(s => s.id !== deleteTarget.id));
+    setDeleteTarget(null);
+  }
+
+  const activeSessions = sessions.filter(s => !s.is_cancelled);
+  const cancelledCount = sessions.length - activeSessions.length;
+  const avgAttendance = (() => {
+    const rates = activeSessions
+      .map(s => {
+        const entries = Object.entries(s.attendance || {});
+        if (entries.length === 0) return null;
+        const present = entries.filter(([, v]) => v === true).length;
+        return present / entries.length;
+      })
+      .filter(r => r !== null);
+    if (rates.length === 0) return null;
+    return Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 100);
+  })();
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Training History</h1>
+      </div>
+
+      {role !== "team_manager" && (
+        <div className="page-header-actions">
+          <button className="secondary" onClick={onNewSession}>+ New Session</button>
+        </div>
+      )}
+
+      {seasons.length > 1 && (
+        <div className="season-select-row">
+          <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {!loading && sessions.length > 0 && (
+        <div className="session-summary-row">
+          <div className="quick-stat"><label>Sessions</label>{sessions.length}</div>
+          <div className="quick-stat"><label>Cancelled</label>{cancelledCount}</div>
+          <div className="quick-stat"><label>Avg Attendance</label>{avgAttendance === null ? "—" : avgAttendance + "%"}</div>
+        </div>
+      )}
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : sessions.length === 0 ? (
+        <div className="empty-note">No training sessions recorded yet.</div>
+      ) : (
+        <div className="game-list">
+          {sessions.map(s => (
+            <TrainingSessionCard
+              key={s.id}
+              session={s}
+              role={role}
+              onOpen={onOpenSession}
+              onDelete={setDeleteTarget}
+            />
+          ))}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Delete this session?</h2>
+            <div className="modal-subtitle">
+              {formatSessionDate(deleteTarget.date_millis)} — this permanently deletes the session and its attendance record. This can't be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto", background: "var(--danger)" }}
+                disabled={deleting}
+                onClick={confirmDelete}
+              >
+                {deleting ? "Deleting…" : "Delete Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrainingSessionScreen({ sessionId, clubId, role, backLabel, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [players, setPlayers] = useState([]);
+  const [date, setDate] = useState(() => toDateInputValue(Date.now()));
+  const [isCancelled, setIsCancelled] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [attendance, setAttendance] = useState({});
+  const [absenceReasons, setAbsenceReasons] = useState({});
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [isNew, setIsNew] = useState(!sessionId);
+
+  useEffect(() => {
+    (async () => {
+      setErrorMsg("");
+      const [{ data: seasonsData, error: seasonsErr }, { data: playersData, error: playersErr }] = await Promise.all([
+        db.from("seasons").select("*").eq("club_id", clubId),
+        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      ]);
+      if (seasonsErr) { setErrorMsg(seasonsErr.message); setLoading(false); return; }
+      if (playersErr) { setErrorMsg(playersErr.message); setLoading(false); return; }
+      setSeasons(seasonsData || []);
+      const rosterNames = (playersData || []).map(p => p.name);
+      setPlayers(rosterNames);
+
+      if (sessionId) {
+        const { data: session, error: sessionErr } = await db.from("training_sessions").select("*").eq("id", sessionId).maybeSingle();
+        if (sessionErr || !session) {
+          setErrorMsg(sessionErr ? sessionErr.message : "Could not find this session.");
+          setLoading(false);
+          return;
+        }
+        setSeasonName(session.season);
+        setDate(toDateInputValue(session.date_millis));
+        setIsCancelled(!!session.is_cancelled);
+        setCancellationReason(session.cancellation_reason || "");
+        setNotes(session.notes || "");
+        const initialAttendance = {};
+        rosterNames.forEach(name => {
+          initialAttendance[name] = (session.attendance || {})[name] !== false;
+        });
+        setAttendance(initialAttendance);
+        setAbsenceReasons(session.absence_reasons || {});
+      } else {
+        if (seasonsData && seasonsData.length > 0) setSeasonName(seasonsData[0].name);
+        const initialAttendance = {};
+        rosterNames.forEach(name => { initialAttendance[name] = true; });
+        setAttendance(initialAttendance);
+      }
+      setLoading(false);
+    })();
+  }, [clubId, sessionId]);
+
+  function toggleAttendance(name) {
+    setAttendance(prev => {
+      const nextVal = !prev[name];
+      const nextAttendance = { ...prev, [name]: nextVal };
+      if (!nextVal) {
+        setAbsenceReasons(r => ({ ...r, [name]: r[name] || "Unavailable" }));
+      } else {
+        setAbsenceReasons(r => {
+          const next = { ...r };
+          delete next[name];
+          return next;
+        });
+      }
+      return nextAttendance;
+    });
+  }
+
+  function updateAbsenceReason(name, text) {
+    setAbsenceReasons(prev => ({ ...prev, [name]: text }));
+  }
+
+  async function handleSave() {
+    setErrorMsg(""); setInfoMsg("");
+    if (isCancelled && !cancellationReason.trim()) {
+      setErrorMsg("Please give a reason for cancelling this session.");
+      return;
+    }
+    setSaving(true);
+    const dateMillis = new Date(date + "T00:00:00").getTime();
+    const payload = {
+      club_id: clubId,
+      season: seasonName,
+      date_millis: dateMillis,
+      is_cancelled: isCancelled,
+      cancellation_reason: isCancelled ? cancellationReason.trim() : "",
+      attendance: isCancelled ? {} : attendance,
+      absence_reasons: isCancelled ? {} : absenceReasons,
+      notes: notes,
+    };
+
+    if (sessionId) {
+      const { error: updateErr } = await db.from("training_sessions").update(payload).eq("id", sessionId);
+      setSaving(false);
+      if (updateErr) { setErrorMsg(updateErr.message); return; }
+      setInfoMsg("Saved.");
+    } else {
+      const { error: insertErr } = await db.from("training_sessions").insert(payload).select().single();
+      setSaving(false);
+      if (insertErr) {
+        setErrorMsg(insertErr.message.includes("duplicate")
+          ? "A training session already exists for this date and season."
+          : insertErr.message);
+        return;
+      }
+      setIsNew(false);
+      onBack();
+      return;
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setErrorMsg("");
+    const { error: deleteErr } = await db.from("training_sessions").delete().eq("id", sessionId);
+    setDeleting(false);
+    if (deleteErr) { setErrorMsg(deleteErr.message); return; }
+    onBack();
+  }
+
+  if (loading) {
+    return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
+  }
+
+  const canManage = role !== "team_manager";
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to {backLabel}</a>
+        <h1 className="page-title">{isNew ? "New Training Session" : "Training Session"}</h1>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 480, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 480, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      <div className="session-form">
+        <div className="session-field">
+          <label>Season</label>
+          {seasons.length > 1 ? (
+            <select value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+              {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          ) : (
+            <div className="muted-hint">{seasonName || "—"}</div>
+          )}
+        </div>
+
+        <div className="session-field">
+          <label>Date</label>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} />
+        </div>
+
+        <div className="session-field">
+          <div className="attendance-toggle-row">
+            <label style={{ margin: 0 }}>Cancel this session</label>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={isCancelled} onChange={() => setIsCancelled(v => !v)} />
+              <span className="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        {isCancelled && (
+          <div className="session-field">
+            <label>Reason for cancelling</label>
+            <input type="text" value={cancellationReason} onChange={e => setCancellationReason(e.target.value)} placeholder="e.g. Rain/Wet weather" />
+          </div>
+        )}
+
+        <div className="session-field">
+          <label>Notes (optional)</label>
+          <textarea rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Focused on shooting drills, court was wet in patches" />
+        </div>
+      </div>
+
+      {!isCancelled && (
+        <div className="attendance-section">
+          <h3>Attendance</h3>
+          {players.length === 0 ? (
+            <div className="empty-note">No players recorded for this club yet.</div>
+          ) : (
+            players.map(name => (
+              <AttendanceRow
+                key={name}
+                name={name}
+                present={attendance[name]}
+                reason={absenceReasons[name]}
+                onToggle={() => toggleAttendance(name)}
+                onReasonChange={text => updateAbsenceReason(name, text)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      <div className="session-actions">
+        {!isNew && canManage && (
+          <button className="secondary danger-text" onClick={() => setShowDeleteConfirm(true)} disabled={saving || deleting}>
+            Delete Session
+          </button>
+        )}
+        <button className="primary" style={{ marginTop: 0, width: "auto" }} onClick={handleSave} disabled={saving || deleting}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <h2>Delete this session?</h2>
+            <div className="modal-subtitle">
+              This permanently deletes the session and its attendance record. This can't be undone.
+            </div>
+            <div className="modal-actions">
+              <button className="secondary" onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>Cancel</button>
+              <button
+                className="primary"
+                style={{ marginTop: 0, width: "auto", background: "var(--danger)" }}
+                disabled={deleting}
+                onClick={() => { setShowDeleteConfirm(false); handleDelete(); }}
+              >
+                {deleting ? "Deleting…" : "Delete Session"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
   const isAdmin = profile.role === "admin";
   const isTeamManager = profile.role === "team_manager";
 
   // Mirrors the Android app's role gating (see Permission levels / roles
   // section of the project knowledge doc): team_manager gets Game Day +
   // Training + history views only; Reports/Stats/Registration/Evaluations
-  // and Club Settings/Manage Coaches stay hidden. Nothing here is wired up
-  // yet (Phase 1 is just the login/role foundation) — every tile is a
-  // placeholder until its phase is built.
+  // and Club Settings/Manage Coaches stay hidden. Reports & Admin sections
+  // remain "Coming soon" placeholders pending later phases.
   return (
     <div>
       <div className="topbar">
@@ -2012,8 +2508,8 @@ function HomeScreen({ profile, onLogout, onNavigate }) {
 
       <div className="section-label">Training</div>
       <div className="nav-grid">
-        <NavTile label="Training Attendance" enabled={false} />
-        <NavTile label="Training History" enabled={false} />
+        <NavTile label="Training Attendance" enabled={!isTeamManager} onClick={onQuickTraining} />
+        <NavTile label="Training History" enabled={true} onClick={() => onNavigate("training-history")} />
       </div>
 
       {!isTeamManager && (
@@ -2050,6 +2546,8 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [gameDayId, setGameDayId] = useState(null);
   const [gameDayReturnTo, setGameDayReturnTo] = useState("planned-games");
+  const [trainingSessionId, setTrainingSessionId] = useState(null);
+  const [trainingReturnTo, setTrainingReturnTo] = useState("training-history");
 
   const clearMessages = () => { setError(""); setInfo(""); };
 
@@ -2234,6 +2732,13 @@ function App() {
     setScreen(next);
   }
 
+  function openTrainingSession(id, returnTo) {
+    clearMessages();
+    setTrainingSessionId(id);
+    setTrainingReturnTo(returnTo);
+    setScreen("training-session");
+  }
+
   if (screen === "loading") {
     return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
   }
@@ -2253,7 +2758,14 @@ function App() {
     return <ResetScreen onSetNew={handleSetNewPassword} busy={busy} error={error} info={info} />;
   }
   if (screen === "home" && profile) {
-    return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} />;
+    return (
+      <HomeScreen
+        profile={profile}
+        onLogout={handleLogout}
+        onNavigate={goTo}
+        onQuickTraining={() => openTrainingSession(null, "home")}
+      />
+    );
   }
   if (screen === "planned-games" && profile) {
     return (
@@ -2282,7 +2794,14 @@ function App() {
       // managers can't reach this via the UI anyway (button is hidden and
       // the games INSERT policy blocks them at the RLS level too), but this
       // covers it if that ever changes.
-      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} />;
+      return (
+        <HomeScreen
+          profile={profile}
+          onLogout={handleLogout}
+          onNavigate={goTo}
+          onQuickTraining={() => openTrainingSession(null, "home")}
+        />
+      );
     }
     return (
       <CreateGameScreen
@@ -2301,6 +2820,28 @@ function App() {
         role={profile.role}
         backLabel={gameDayReturnTo === "game-history" ? "Game History" : "Upcoming Games"}
         onBack={() => goTo(gameDayReturnTo)}
+      />
+    );
+  }
+  if (screen === "training-history" && profile) {
+    return (
+      <TrainingHistoryScreen
+        clubId={profile.clubId}
+        role={profile.role}
+        onBack={() => goTo("home")}
+        onNewSession={() => openTrainingSession(null, "training-history")}
+        onOpenSession={s => openTrainingSession(s.id, "training-history")}
+      />
+    );
+  }
+  if (screen === "training-session" && profile) {
+    return (
+      <TrainingSessionScreen
+        sessionId={trainingSessionId}
+        clubId={profile.clubId}
+        role={profile.role}
+        backLabel={trainingReturnTo === "home" ? "Home" : "Training History"}
+        onBack={() => goTo(trainingReturnTo)}
       />
     );
   }
