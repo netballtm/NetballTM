@@ -401,6 +401,14 @@
     gap: 10px;
   }
   .locked-card { max-width: 480px; margin: 60px auto; }
+
+  .page-header-actions {
+    max-width: 900px;
+    margin: 12px auto 0 auto;
+    padding: 0 20px;
+    display: flex;
+    justify-content: flex-end;
+  }
 </style>
 </head>
 <body>
@@ -639,7 +647,217 @@ function GameCard({ game, onOpenAvailability, onOpenGameDay }) {
   );
 }
 
-function PlannedGamesScreen({ clubId, onBack, onOpenGameDay }) {
+function RosterToggleList({ players, selected, onToggle }) {
+  return (
+    <div>
+      {players.map(name => (
+        <div className="availability-row" key={name}>
+          <span>{name}</span>
+          <label className="toggle-switch">
+            <input type="checkbox" checked={!!selected[name]} onChange={() => onToggle(name)} />
+            <span className="toggle-slider"></span>
+          </label>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CreateGameScreen({ clubId, onBack, onCreated }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [seasons, setSeasons] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [existingRounds, setExistingRounds] = useState({}); // seasonName -> [round, ...]
+
+  const [seasonName, setSeasonName] = useState("");
+  const [round, setRound] = useState("");
+  const [opponent, setOpponent] = useState("");
+  const [court, setCourt] = useState("");
+  const [dateStr, setDateStr] = useState("");
+  const [timeStr, setTimeStr] = useState("");
+  const [isBye, setIsBye] = useState(false);
+  const [selectedPlayers, setSelectedPlayers] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      const [seasonsRes, playersRes, gamesRes] = await Promise.all([
+        db.from("seasons").select("*").eq("club_id", clubId),
+        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+        db.from("games").select("season_name,round").eq("club_id", clubId),
+      ]);
+      const firstErr = seasonsRes.error || playersRes.error || gamesRes.error;
+      if (firstErr) {
+        setErrorMsg(firstErr.message);
+        setLoading(false);
+        return;
+      }
+      const seasonRows = seasonsRes.data || [];
+      const playerRows = playersRes.data || [];
+      const gameRows = gamesRes.data || [];
+
+      setSeasons(seasonRows);
+      setPlayers(playerRows);
+
+      const roundsBySeason = {};
+      gameRows.forEach(g => {
+        if (!roundsBySeason[g.season_name]) roundsBySeason[g.season_name] = [];
+        roundsBySeason[g.season_name].push(g.round);
+      });
+      setExistingRounds(roundsBySeason);
+
+      const initialSeason = (seasonRows[0] && seasonRows[0].name) || "";
+      setSeasonName(initialSeason);
+      const usedRounds = roundsBySeason[initialSeason] || [];
+      setRound(usedRounds.length ? String(Math.max(...usedRounds) + 1) : "1");
+
+      const initialSelected = {};
+      playerRows.forEach(p => { initialSelected[p.name] = true; });
+      setSelectedPlayers(initialSelected);
+
+      setLoading(false);
+    })();
+  }, [clubId]);
+
+  function handleSeasonChange(name) {
+    setSeasonName(name);
+    const usedRounds = existingRounds[name] || [];
+    setRound(usedRounds.length ? String(Math.max(...usedRounds) + 1) : "1");
+  }
+
+  function togglePlayer(name) {
+    setSelectedPlayers(prev => ({ ...prev, [name]: !prev[name] }));
+  }
+
+  function formatDisplayDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00");
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return dayNames[d.getDay()] + ", " + d.getDate() + " " + monthNames[d.getMonth()] + " " + d.getFullYear();
+  }
+
+  function formatDisplayTime(t) {
+    if (!t) return "";
+    const parts = t.split(":");
+    let h = parseInt(parts[0], 10);
+    const m = parts[1];
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12; if (h === 0) h = 12;
+    return h + ":" + m + " " + ampm;
+  }
+
+  const canSubmit = seasonName && round && (isBye || opponent.trim());
+  const usedRoundsForSeason = (existingRounds[seasonName] || []).slice().sort((a, b) => a - b);
+
+  async function handleCreate() {
+    setSaving(true);
+    setErrorMsg("");
+
+    const rosterNames = isBye ? [] : Object.keys(selectedPlayers).filter(name => selectedPlayers[name]).sort();
+
+    const payload = {
+      club_id: clubId,
+      season_name: seasonName,
+      round: parseInt(round, 10),
+      opponent: isBye ? "BYE" : opponent.trim(),
+      court: court.trim() || null,
+      game_date: formatDisplayDate(dateStr),
+      game_time: formatDisplayTime(timeStr),
+      is_completed: false,
+      is_bye: isBye,
+      players_snapshot: rosterNames.map(name => ({ name, wasFillIn: false })),
+      positions_by_quarter: {},
+      goals_by_quarter: {},
+      opponent_goals_by_quarter: {},
+      turnovers_by_quarter: {},
+      quarter_notes: {},
+      player_availability: {},
+      players_of_match: [],
+      potm_comments: {},
+      potm_photos: {},
+      our_score: 0,
+      opponent_score: 0,
+    };
+
+    const { error: insertErr } = await db.from("games").insert(payload);
+    setSaving(false);
+    if (insertErr) { setErrorMsg(insertErr.message); return; }
+    onCreated();
+  }
+
+  if (loading) return <div className="empty-note">Loading…</div>;
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Upcoming Games</a>
+        <h1 className="page-title">Create Game</h1>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      <div className="quarters-grid" style={{ gridTemplateColumns: "1fr", maxWidth: 480 }}>
+        <div className="quarter-panel">
+          <div className="quarter-field">
+            <label>Season</label>
+            <select className="season-select" style={{ width: "100%" }} value={seasonName} onChange={e => handleSeasonChange(e.target.value)}>
+              {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="quarter-field">
+            <label>Round</label>
+            <input type="number" min="1" value={round} onChange={e => setRound(e.target.value)} />
+            {usedRoundsForSeason.length > 0 && (
+              <div className="muted-hint">Rounds already used this season: {usedRoundsForSeason.join(", ")}</div>
+            )}
+          </div>
+          <div className="quarter-field">
+            <label>
+              <input type="checkbox" checked={isBye} onChange={e => setIsBye(e.target.checked)} style={{ width: "auto", marginRight: 8 }} />
+              This round is a BYE
+            </label>
+          </div>
+          {!isBye && (
+            <div className="quarter-field">
+              <label>Opponent</label>
+              <input type="text" value={opponent} onChange={e => setOpponent(e.target.value)} />
+            </div>
+          )}
+          <div className="quarter-field">
+            <label>Court</label>
+            <input type="text" value={court} onChange={e => setCourt(e.target.value)} />
+          </div>
+          <div className="quarter-field">
+            <label>Date</label>
+            <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)} />
+          </div>
+          <div className="quarter-field">
+            <label>Time</label>
+            <input type="time" value={timeStr} onChange={e => setTimeStr(e.target.value)} />
+          </div>
+        </div>
+
+        {!isBye && (
+          <div className="quarter-panel">
+            <h3>Roster</h3>
+            <RosterToggleList players={players.map(p => p.name)} selected={selectedPlayers} onToggle={togglePlayer} />
+          </div>
+        )}
+      </div>
+
+      <div className="gameday-actions">
+        <button className="secondary" onClick={onBack} disabled={saving}>Cancel</button>
+        <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving || !canSubmit} onClick={handleCreate}>
+          {saving ? "Creating…" : "Create Game"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame }) {
   const [seasons, setSeasons] = useState([]);
   const [seasonName, setSeasonName] = useState("");
   const [games, setGames] = useState([]);
@@ -690,6 +908,12 @@ function PlannedGamesScreen({ clubId, onBack, onOpenGameDay }) {
         <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
         <h1 className="page-title">Upcoming Games</h1>
       </div>
+
+      {role !== "team_manager" && (
+        <div className="page-header-actions">
+          <button className="secondary" onClick={onCreateGame}>+ Create Game</button>
+        </div>
+      )}
 
       {seasons.length > 1 && (
         <div className="season-select-row">
@@ -1363,8 +1587,26 @@ function App() {
     return (
       <PlannedGamesScreen
         clubId={profile.clubId}
+        role={profile.role}
         onBack={() => goTo("home")}
         onOpenGameDay={g => { setGameDayId(g.id); goTo("game-day"); }}
+        onCreateGame={() => goTo("create-game")}
+      />
+    );
+  }
+  if (screen === "create-game" && profile) {
+    if (profile.role === "team_manager") {
+      // Router-level backstop, matching the Android app's pattern — team
+      // managers can't reach this via the UI anyway (button is hidden and
+      // the games INSERT policy blocks them at the RLS level too), but this
+      // covers it if that ever changes.
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} />;
+    }
+    return (
+      <CreateGameScreen
+        clubId={profile.clubId}
+        onBack={() => goTo("planned-games")}
+        onCreated={() => goTo("planned-games")}
       />
     );
   }
