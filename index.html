@@ -352,6 +352,33 @@
   .score-box .score-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
   .score-box .score-value { font-size: 22px; font-weight: 700; }
   .score-sep { font-size: 20px; color: var(--muted); font-weight: 700; }
+  .quick-stats-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .quick-stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 14px;
+    min-width: 120px;
+    text-align: center;
+  }
+  .quick-stat label {
+    display: block;
+    font-size: 10.5px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0 0 5px 0;
+    font-weight: 600;
+  }
+  .quick-stat input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 15px;
+    text-align: center;
+    font-weight: 700;
+  }
 
   .quarters-grid {
     max-width: 1000px;
@@ -1121,7 +1148,7 @@ function CourtView({ q, players, positions, onAssign, onClearSlot, onToggleBench
   );
 }
 
-function QuarterPanel({ q, players, positions, goals, oppGoals, turnovers, notes, onGoalChange, onOppGoalsChange, onTurnoversChange, onNotesChange }) {
+function QuarterPanel({ q, players, positions, goals, notes, onGoalChange, onNotesChange }) {
   const shooters = players.filter(name => {
     const code = positions[q] && positions[q][name];
     return code === "GS" || code === "GA";
@@ -1141,14 +1168,6 @@ function QuarterPanel({ q, players, positions, goals, oppGoals, turnovers, notes
           />
         </div>
       ))}
-      <div className="quarter-field">
-        <label>Opponent goals</label>
-        <input type="number" min="0" value={oppGoals[q] || 0} onChange={e => onOppGoalsChange(q, parseInt(e.target.value, 10) || 0)} />
-      </div>
-      <div className="quarter-field">
-        <label>Turnovers</label>
-        <input type="number" min="0" value={turnovers[q] || 0} onChange={e => onTurnoversChange(q, parseInt(e.target.value, 10) || 0)} />
-      </div>
       <div className="quarter-field">
         <label>Notes (optional)</label>
         <input type="text" value={notes[q] || ""} onChange={e => onNotesChange(q, e.target.value)} />
@@ -1416,6 +1435,24 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
             <div className="score-value">{oppScoreLive}</div>
           </div>
         </div>
+        <div className="quick-stats-row">
+          <div className="quick-stat">
+            <label>Opp Goals · Q{activeQuarter}</label>
+            <input
+              type="number" min="0"
+              value={oppGoals[activeQuarter] || 0}
+              onChange={e => updateOppGoals(activeQuarter, parseInt(e.target.value, 10) || 0)}
+            />
+          </div>
+          <div className="quick-stat">
+            <label>Turnovers · Q{activeQuarter}</label>
+            <input
+              type="number" min="0"
+              value={turnovers[activeQuarter] || 0}
+              onChange={e => updateTurnovers(activeQuarter, parseInt(e.target.value, 10) || 0)}
+            />
+          </div>
+        </div>
       </div>
 
       {errorMsg && <div className="banner error" style={{ maxWidth: 1000, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
@@ -1448,12 +1485,8 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
           players={players}
           positions={positions}
           goals={goals}
-          oppGoals={oppGoals}
-          turnovers={turnovers}
           notes={notes}
           onGoalChange={updateGoal}
-          onOppGoalsChange={updateOppGoals}
-          onTurnoversChange={updateTurnovers}
           onNotesChange={updateNotes}
         />
       </div>
