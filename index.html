@@ -194,6 +194,141 @@
     color: var(--muted);
     font-size: 14px;
   }
+
+  .page-header {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 20px 0 20px;
+  }
+  .back-link {
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .back-link:hover { text-decoration: underline; }
+  .page-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 6px 0 0 0;
+  }
+  .season-select-row {
+    max-width: 900px;
+    margin: 14px auto 0 auto;
+    padding: 0 20px;
+  }
+  select.season-select {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+  }
+  .game-list {
+    max-width: 900px;
+    margin: 16px auto 40px auto;
+    padding: 0 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .game-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .game-card.bye { opacity: 0.7; }
+  .game-card .round-line { font-weight: 700; font-size: 14px; }
+  .game-card .meta-line { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .game-card .unavailable-line { color: #B45309; font-size: 12.5px; margin-top: 4px; }
+  .empty-note {
+    max-width: 900px;
+    margin: 0 auto;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 30px 20px;
+    text-align: center;
+  }
+  button.secondary {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  button.secondary:hover { background: #F0F1F4; }
+  button.secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 50;
+  }
+  .modal-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 24px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.25);
+  }
+  .modal-card h2 { margin: 0 0 4px 0; font-size: 17px; }
+  .modal-card .modal-subtitle { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .availability-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .availability-row:last-child { border-bottom: none; }
+
+  .toggle-switch { position: relative; display: inline-block; width: 42px; height: 24px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc;
+    transition: 0.15s;
+    border-radius: 24px;
+  }
+  .toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.15s;
+    border-radius: 50%;
+  }
+  .toggle-switch input:checked + .toggle-slider { background-color: var(--accent); }
+  .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); }
 </style>
 </head>
 <body>
@@ -348,6 +483,171 @@ function ResetScreen({ onSetNew, busy, error, info }) {
   );
 }
 
+function AvailabilityDialog({ game, onClose, onSave, busy }) {
+  // Roster comes from the game's own players_snapshot (the season roster
+  // captured when the game was created) rather than a live registrations
+  // lookup — this matches how the Android app's Availability dialog works
+  // and sidesteps needing to resolve registrations.season_index to a season.
+  const players = (game.players_snapshot || []).map(p => p.name).sort();
+
+  const initial = {};
+  players.forEach(name => {
+    // Default is available (true) unless the game row has an explicit
+    // false entry for that player — same convention as the rest of the app.
+    initial[name] = (game.player_availability || {})[name] !== false;
+  });
+  const [avail, setAvail] = useState(initial);
+
+  function toggle(name) {
+    setAvail(prev => ({ ...prev, [name]: !prev[name] }));
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <h2>Availability</h2>
+        <div className="modal-subtitle">
+          Round {game.round}{game.opponent ? " vs " + game.opponent : ""}
+        </div>
+        {players.length === 0 && (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            No players recorded for this game yet.
+          </div>
+        )}
+        {players.map(name => (
+          <div className="availability-row" key={name}>
+            <span>{name}</span>
+            <label className="toggle-switch">
+              <input type="checkbox" checked={!!avail[name]} onChange={() => toggle(name)} />
+              <span className="toggle-slider"></span>
+            </label>
+          </div>
+        ))}
+        <div className="modal-actions">
+          <button className="secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={busy} onClick={() => onSave(avail)}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GameCard({ game, onOpenAvailability }) {
+  const unavailable = Object.entries(game.player_availability || {})
+    .filter(([, v]) => v === false)
+    .map(([name]) => name)
+    .sort();
+
+  return (
+    <div className={"game-card" + (game.is_bye ? " bye" : "")}>
+      <div>
+        <div className="round-line">
+          Round {game.round}{game.is_bye ? " — BYE" : " vs " + game.opponent}
+        </div>
+        {!game.is_bye && (
+          <div className="meta-line">
+            {game.game_date}
+            {game.game_time ? " · " + game.game_time : ""}
+            {game.court ? " · Court " + game.court : ""}
+          </div>
+        )}
+        {unavailable.length > 0 && (
+          <div className="unavailable-line">Unavailable: {unavailable.join(", ")}</div>
+        )}
+      </div>
+      {!game.is_bye && (
+        <button className="secondary" onClick={() => onOpenAvailability(game)}>Availability</button>
+      )}
+    </div>
+  );
+}
+
+function PlannedGamesScreen({ clubId, onBack }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [games, setGames] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogGame, setDialogGame] = useState(null);
+  const [savingAvailability, setSavingAvailability] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: seasonsErr } = await db.from("seasons").select("*").eq("club_id", clubId);
+      if (seasonsErr) { setErrorMsg(seasonsErr.message); setLoading(false); return; }
+      setSeasons(data || []);
+      if (data && data.length > 0) setSeasonName(data[0].name);
+      else setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadGames = useCallback(async () => {
+    if (!seasonName) return;
+    setLoading(true);
+    const { data, error: gamesErr } = await db
+      .from("games")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season_name", seasonName)
+      .eq("is_completed", false)
+      .order("round", { ascending: true });
+    if (gamesErr) setErrorMsg(gamesErr.message);
+    else setGames(data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { loadGames(); }, [loadGames]);
+
+  async function saveAvailability(map) {
+    setSavingAvailability(true);
+    const { error: updateErr } = await db.from("games").update({ player_availability: map }).eq("id", dialogGame.id);
+    setSavingAvailability(false);
+    if (updateErr) { setErrorMsg(updateErr.message); return; }
+    setGames(prev => prev.map(g => g.id === dialogGame.id ? { ...g, player_availability: map } : g));
+    setDialogGame(null);
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Upcoming Games</h1>
+      </div>
+
+      {seasons.length > 1 && (
+        <div className="season-select-row">
+          <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : games.length === 0 ? (
+        <div className="empty-note">No upcoming games for this season.</div>
+      ) : (
+        <div className="game-list">
+          {games.map(g => <GameCard key={g.id} game={g} onOpenAvailability={setDialogGame} />)}
+        </div>
+      )}
+
+      {dialogGame && (
+        <AvailabilityDialog
+          game={dialogGame}
+          busy={savingAvailability}
+          onClose={() => setDialogGame(null)}
+          onSave={saveAvailability}
+        />
+      )}
+    </div>
+  );
+}
+
 function NavTile({ label, enabled, onClick }) {
   return (
     <div className={"nav-tile " + (enabled ? "enabled" : "disabled")} onClick={enabled ? onClick : undefined}>
@@ -357,7 +657,7 @@ function NavTile({ label, enabled, onClick }) {
   );
 }
 
-function HomeScreen({ profile, onLogout }) {
+function HomeScreen({ profile, onLogout, onNavigate }) {
   const isAdmin = profile.role === "admin";
   const isTeamManager = profile.role === "team_manager";
 
@@ -383,7 +683,7 @@ function HomeScreen({ profile, onLogout }) {
       <div className="section-label">Game Day</div>
       <div className="nav-grid">
         <NavTile label="Game Day" enabled={false} />
-        <NavTile label="Upcoming Games" enabled={false} />
+        <NavTile label="Upcoming Games" enabled={true} onClick={() => onNavigate("planned-games")} />
         <NavTile label="Game History" enabled={false} />
       </div>
 
@@ -628,7 +928,10 @@ function App() {
     return <ResetScreen onSetNew={handleSetNewPassword} busy={busy} error={error} info={info} />;
   }
   if (screen === "home" && profile) {
-    return <HomeScreen profile={profile} onLogout={handleLogout} />;
+    return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} />;
+  }
+  if (screen === "planned-games" && profile) {
+    return <PlannedGamesScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
   }
   return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
 }
