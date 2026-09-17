@@ -329,6 +329,78 @@
   }
   .toggle-switch input:checked + .toggle-slider { background-color: var(--accent); }
   .toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+  .gameday-toolbar {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px 20px 0 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .score-row { display: flex; gap: 12px; align-items: center; }
+  .score-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 18px;
+    text-align: center;
+    min-width: 90px;
+  }
+  .score-box .score-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .score-box .score-value { font-size: 22px; font-weight: 700; }
+  .score-sep { font-size: 20px; color: var(--muted); font-weight: 700; }
+
+  .position-wrap {
+    max-width: 1000px;
+    margin: 20px auto 0 auto;
+    padding: 0 20px;
+    overflow-x: auto;
+  }
+  .position-table { border-collapse: collapse; width: 100%; min-width: 560px; }
+  .position-table th, .position-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    text-align: left;
+  }
+  .position-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  .position-table select { padding: 5px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
+  .legend-row {
+    max-width: 1000px;
+    margin: 10px auto 0 auto;
+    padding: 0 20px;
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .quarters-grid {
+    max-width: 1000px;
+    margin: 20px auto 0 auto;
+    padding: 0 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .quarter-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .quarter-panel h3 { margin: 0 0 10px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  .quarter-field { margin-bottom: 10px; }
+  .quarter-field label { font-size: 12px; font-weight: 600; margin: 0 0 4px 0; }
+  .quarter-field input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 13px; }
+  .quarter-field .muted-hint { color: var(--muted); font-size: 11.5px; }
+
+  .gameday-actions {
+    max-width: 1000px;
+    margin: 24px auto 40px auto;
+    padding: 0 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .locked-card { max-width: 480px; margin: 60px auto; }
 </style>
 </head>
 <body>
@@ -534,7 +606,7 @@ function AvailabilityDialog({ game, onClose, onSave, busy }) {
   );
 }
 
-function GameCard({ game, onOpenAvailability }) {
+function GameCard({ game, onOpenAvailability, onOpenGameDay }) {
   const unavailable = Object.entries(game.player_availability || {})
     .filter(([, v]) => v === false)
     .map(([name]) => name)
@@ -558,13 +630,16 @@ function GameCard({ game, onOpenAvailability }) {
         )}
       </div>
       {!game.is_bye && (
-        <button className="secondary" onClick={() => onOpenAvailability(game)}>Availability</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="secondary" onClick={() => onOpenAvailability(game)}>Availability</button>
+          <button className="secondary" onClick={() => onOpenGameDay(game)}>Open Game Day</button>
+        </div>
       )}
     </div>
   );
 }
 
-function PlannedGamesScreen({ clubId, onBack }) {
+function PlannedGamesScreen({ clubId, onBack, onOpenGameDay }) {
   const [seasons, setSeasons] = useState([]);
   const [seasonName, setSeasonName] = useState("");
   const [games, setGames] = useState([]);
@@ -632,7 +707,7 @@ function PlannedGamesScreen({ clubId, onBack }) {
         <div className="empty-note">No upcoming games for this season.</div>
       ) : (
         <div className="game-list">
-          {games.map(g => <GameCard key={g.id} game={g} onOpenAvailability={setDialogGame} />)}
+          {games.map(g => <GameCard key={g.id} game={g} onOpenAvailability={setDialogGame} onOpenGameDay={onOpenGameDay} />)}
         </div>
       )}
 
@@ -644,6 +719,359 @@ function PlannedGamesScreen({ clubId, onBack }) {
           onSave={saveAvailability}
         />
       )}
+    </div>
+  );
+}
+
+const QUARTERS = ["1", "2", "3", "4"];
+const POSITIONS = ["GS", "GA", "WA", "C", "WD", "GD", "GK", "OFF", "NAP"];
+// Same 2-hour staleness window as the Android app's game lock guard (see
+// project notes) — a lock older than this is treated as abandoned.
+const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
+
+function PositionGrid({ players, positions, onChange }) {
+  return (
+    <div className="position-wrap">
+      <table className="position-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            {QUARTERS.map(q => <th key={q}>Q{q}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {players.map(name => (
+            <tr key={name}>
+              <td>{name}</td>
+              {QUARTERS.map(q => (
+                <td key={q}>
+                  <select
+                    value={(positions[q] && positions[q][name]) || "OFF"}
+                    onChange={e => onChange(q, name, e.target.value)}
+                  >
+                    {POSITIONS.map(code => <option key={code} value={code}>{code}</option>)}
+                  </select>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function QuarterPanel({ q, players, positions, goals, oppGoals, turnovers, notes, onGoalChange, onOppGoalsChange, onTurnoversChange, onNotesChange }) {
+  const shooters = players.filter(name => {
+    const code = positions[q] && positions[q][name];
+    return code === "GS" || code === "GA";
+  });
+  return (
+    <div className="quarter-panel">
+      <h3>Quarter {q}</h3>
+      {shooters.length === 0 ? (
+        <div className="quarter-field"><span className="muted-hint">Assign GS/GA above to record goals.</span></div>
+      ) : shooters.map(name => (
+        <div className="quarter-field" key={name}>
+          <label>{name} goals</label>
+          <input
+            type="number" min="0"
+            value={(goals[q] && goals[q][name]) || 0}
+            onChange={e => onGoalChange(q, name, parseInt(e.target.value, 10) || 0)}
+          />
+        </div>
+      ))}
+      <div className="quarter-field">
+        <label>Opponent goals</label>
+        <input type="number" min="0" value={oppGoals[q] || 0} onChange={e => onOppGoalsChange(q, parseInt(e.target.value, 10) || 0)} />
+      </div>
+      <div className="quarter-field">
+        <label>Turnovers</label>
+        <input type="number" min="0" value={turnovers[q] || 0} onChange={e => onTurnoversChange(q, parseInt(e.target.value, 10) || 0)} />
+      </div>
+      <div className="quarter-field">
+        <label>Notes (optional)</label>
+        <input type="text" value={notes[q] || ""} onChange={e => onNotesChange(q, e.target.value)} />
+      </div>
+    </div>
+  );
+}
+
+function GameDayScreen({ gameId, clubId, coachId, onBack }) {
+  const [loading, setLoading] = useState(true);
+  const [lockState, setLockState] = useState("checking"); // checking | held | locked-by-other
+  const [lockedByName, setLockedByName] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const [game, setGame] = useState(null);
+  const [players, setPlayers] = useState([]);
+  const [positions, setPositions] = useState({ "1": {}, "2": {}, "3": {}, "4": {} });
+  const [goals, setGoals] = useState({ "1": {}, "2": {}, "3": {}, "4": {} });
+  const [oppGoals, setOppGoals] = useState({ "1": 0, "2": 0, "3": 0, "4": 0 });
+  const [turnovers, setTurnovers] = useState({ "1": 0, "2": 0, "3": 0, "4": 0 });
+  const [notes, setNotes] = useState({ "1": "", "2": "", "3": "", "4": "" });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setErrorMsg("");
+
+      const { data: gameRow, error: gameErr } = await db.from("games").select("*").eq("id", gameId).maybeSingle();
+      if (cancelled) return;
+      if (gameErr || !gameRow) {
+        setErrorMsg("Could not load this game.");
+        setLoading(false);
+        return;
+      }
+
+      const lockKey = { club_id: clubId, season_name: gameRow.season_name, round: gameRow.round, opponent: gameRow.opponent };
+
+      const { data: existingLock } = await db
+        .from("game_locks")
+        .select("*")
+        .eq("club_id", clubId)
+        .eq("season_name", gameRow.season_name)
+        .eq("round", gameRow.round)
+        .eq("opponent", gameRow.opponent)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      let shouldInsertLock = false;
+
+      if (existingLock) {
+        const age = Date.now() - Number(existingLock.locked_at);
+        if (age > LOCK_STALE_MS) {
+          // Stale lock left behind (app minimised/killed mid-edit) — clear it
+          // and take over, same as the Android app's 2-hour staleness guard.
+          await db.from("game_locks").delete().eq("id", existingLock.id);
+          shouldInsertLock = true;
+        } else if (existingLock.locked_by !== coachId) {
+          const { data: otherCoach } = await db.from("coaches").select("display_name,email").eq("id", existingLock.locked_by).maybeSingle();
+          if (cancelled) return;
+          setLockedByName((otherCoach && (otherCoach.display_name || otherCoach.email)) || "another coach");
+          setLockState("locked-by-other");
+          setLoading(false);
+          return;
+        }
+        // else: it's already our own lock (e.g. reopened in another tab) — carry on.
+      } else {
+        shouldInsertLock = true;
+      }
+
+      if (shouldInsertLock) {
+        const { error: insertErr } = await db.from("game_locks").insert({ ...lockKey, locked_by: coachId, locked_at: Date.now() });
+        if (insertErr) {
+          // Another coach grabbed the lock in the same instant — re-check who has it now
+          // rather than surfacing a raw unique-constraint error.
+          const { data: raceLock } = await db
+            .from("game_locks").select("*")
+            .eq("club_id", clubId).eq("season_name", gameRow.season_name)
+            .eq("round", gameRow.round).eq("opponent", gameRow.opponent)
+            .maybeSingle();
+          if (cancelled) return;
+          if (raceLock && raceLock.locked_by !== coachId) {
+            const { data: otherCoach } = await db.from("coaches").select("display_name,email").eq("id", raceLock.locked_by).maybeSingle();
+            if (cancelled) return;
+            setLockedByName((otherCoach && (otherCoach.display_name || otherCoach.email)) || "another coach");
+            setLockState("locked-by-other");
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      if (cancelled) return;
+
+      const snapshotPlayers = (gameRow.players_snapshot || []).map(p => p.name);
+      const nextPositions = {};
+      const nextGoals = {};
+      const nextOppGoals = {};
+      const nextTurnovers = {};
+      const nextNotes = {};
+      QUARTERS.forEach(q => {
+        const storedPositions = (gameRow.positions_by_quarter && gameRow.positions_by_quarter[q]) || {};
+        const qPositions = {};
+        snapshotPlayers.forEach(name => { qPositions[name] = storedPositions[name] || "OFF"; });
+        nextPositions[q] = qPositions;
+        nextGoals[q] = (gameRow.goals_by_quarter && gameRow.goals_by_quarter[q]) || {};
+        nextOppGoals[q] = (gameRow.opponent_goals_by_quarter && gameRow.opponent_goals_by_quarter[q]) || 0;
+        nextTurnovers[q] = (gameRow.turnovers_by_quarter && gameRow.turnovers_by_quarter[q]) || 0;
+        nextNotes[q] = (gameRow.quarter_notes && gameRow.quarter_notes[q]) || "";
+      });
+
+      setGame(gameRow);
+      setPlayers(snapshotPlayers);
+      setPositions(nextPositions);
+      setGoals(nextGoals);
+      setOppGoals(nextOppGoals);
+      setTurnovers(nextTurnovers);
+      setNotes(nextNotes);
+      setLockState("held");
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+  }, [gameId, clubId, coachId]);
+
+  function updatePosition(q, name, code) {
+    setPositions(prev => ({ ...prev, [q]: { ...prev[q], [name]: code } }));
+  }
+  function updateGoal(q, name, value) {
+    setGoals(prev => ({ ...prev, [q]: { ...prev[q], [name]: value } }));
+  }
+  function updateOppGoals(q, value) {
+    setOppGoals(prev => ({ ...prev, [q]: value }));
+  }
+  function updateTurnovers(q, value) {
+    setTurnovers(prev => ({ ...prev, [q]: value }));
+  }
+  function updateNotes(q, value) {
+    setNotes(prev => ({ ...prev, [q]: value }));
+  }
+
+  async function releaseLock() {
+    if (!game) return;
+    await db.from("game_locks")
+      .delete()
+      .eq("club_id", clubId)
+      .eq("season_name", game.season_name)
+      .eq("round", game.round)
+      .eq("opponent", game.opponent)
+      .eq("locked_by", coachId);
+  }
+
+  async function handleBack() {
+    await releaseLock();
+    onBack();
+  }
+
+  async function handleSaveDraft() {
+    setSaving(true);
+    setErrorMsg("");
+    setInfoMsg("");
+
+    let ourScore = 0;
+    let opponentScore = 0;
+    const cleanGoals = {};
+    const cleanOppGoals = {};
+    const cleanTurnovers = {};
+    const cleanNotes = {};
+
+    QUARTERS.forEach(q => {
+      const qGoals = {};
+      Object.entries(goals[q] || {}).forEach(([name, val]) => {
+        const n = Number(val) || 0;
+        if (n > 0) { qGoals[name] = n; ourScore += n; }
+      });
+      cleanGoals[q] = qGoals;
+      cleanOppGoals[q] = Number(oppGoals[q]) || 0;
+      opponentScore += cleanOppGoals[q];
+      cleanTurnovers[q] = Number(turnovers[q]) || 0;
+      if (notes[q] && notes[q].trim()) cleanNotes[q] = notes[q].trim();
+    });
+
+    const { error: updateErr } = await db.from("games").update({
+      positions_by_quarter: positions,
+      goals_by_quarter: cleanGoals,
+      opponent_goals_by_quarter: cleanOppGoals,
+      turnovers_by_quarter: cleanTurnovers,
+      quarter_notes: cleanNotes,
+      our_score: ourScore,
+      opponent_score: opponentScore,
+    }).eq("id", gameId);
+
+    setSaving(false);
+    if (updateErr) { setErrorMsg(updateErr.message); return; }
+    setInfoMsg("Draft saved.");
+  }
+
+  if (loading) {
+    return <div className="empty-note">Loading…</div>;
+  }
+
+  if (lockState === "locked-by-other") {
+    return (
+      <div className="center-screen">
+        <div className="card locked-card">
+          <h1>Game In Use</h1>
+          <div className="subtitle">This game is currently being edited by {lockedByName}. Try again shortly.</div>
+          <button className="primary" onClick={onBack}>Back</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!game) {
+    return (
+      <div className="empty-note">
+        {errorMsg || "Could not load this game."}
+        <div style={{ marginTop: 14 }}><a className="back-link" onClick={onBack}>&larr; Back</a></div>
+      </div>
+    );
+  }
+
+  const ourScoreLive = QUARTERS.reduce((sum, q) => sum + Object.values(goals[q] || {}).reduce((s, v) => s + (Number(v) || 0), 0), 0);
+  const oppScoreLive = QUARTERS.reduce((sum, q) => sum + (Number(oppGoals[q]) || 0), 0);
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={handleBack}>&larr; Back to Upcoming Games</a>
+        <h1 className="page-title">Round {game.round} vs {game.opponent}</h1>
+      </div>
+
+      <div className="gameday-toolbar">
+        <div className="score-row">
+          <div className="score-box">
+            <div className="score-label">Us</div>
+            <div className="score-value">{ourScoreLive}</div>
+          </div>
+          <div className="score-sep">-</div>
+          <div className="score-box">
+            <div className="score-label">{game.opponent}</div>
+            <div className="score-value">{oppScoreLive}</div>
+          </div>
+        </div>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 1000, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 1000, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      <PositionGrid players={players} positions={positions} onChange={updatePosition} />
+      <div className="legend-row">
+        GS Goal Shooter · GA Goal Attack · WA Wing Attack · C Centre · WD Wing Defence · GD Goal Defence · GK Goal Keeper · OFF Bench · NAP Not Available
+      </div>
+
+      <div className="quarters-grid">
+        {QUARTERS.map(q => (
+          <QuarterPanel
+            key={q}
+            q={q}
+            players={players}
+            positions={positions}
+            goals={goals}
+            oppGoals={oppGoals}
+            turnovers={turnovers}
+            notes={notes}
+            onGoalChange={updateGoal}
+            onOppGoalsChange={updateOppGoals}
+            onTurnoversChange={updateTurnovers}
+            onNotesChange={updateNotes}
+          />
+        ))}
+      </div>
+
+      <div className="gameday-actions">
+        <button className="secondary" onClick={handleBack} disabled={saving}>Back</button>
+        <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving} onClick={handleSaveDraft}>
+          {saving ? "Saving…" : "Save Draft"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -682,7 +1110,7 @@ function HomeScreen({ profile, onLogout, onNavigate }) {
 
       <div className="section-label">Game Day</div>
       <div className="nav-grid">
-        <NavTile label="Game Day" enabled={false} />
+        <NavTile label="Game Day" enabled={true} onClick={() => onNavigate("planned-games")} />
         <NavTile label="Upcoming Games" enabled={true} onClick={() => onNavigate("planned-games")} />
         <NavTile label="Game History" enabled={false} />
       </div>
@@ -725,6 +1153,7 @@ function App() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [profile, setProfile] = useState(null);
+  const [gameDayId, setGameDayId] = useState(null);
 
   const clearMessages = () => { setError(""); setInfo(""); };
 
@@ -931,7 +1360,23 @@ function App() {
     return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} />;
   }
   if (screen === "planned-games" && profile) {
-    return <PlannedGamesScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
+    return (
+      <PlannedGamesScreen
+        clubId={profile.clubId}
+        onBack={() => goTo("home")}
+        onOpenGameDay={g => { setGameDayId(g.id); goTo("game-day"); }}
+      />
+    );
+  }
+  if (screen === "game-day" && profile) {
+    return (
+      <GameDayScreen
+        gameId={gameDayId}
+        clubId={profile.clubId}
+        coachId={profile.id}
+        onBack={() => goTo("planned-games")}
+      />
+    );
   }
   return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
 }
