@@ -353,30 +353,6 @@
   .score-box .score-value { font-size: 22px; font-weight: 700; }
   .score-sep { font-size: 20px; color: var(--muted); font-weight: 700; }
 
-  .position-wrap {
-    max-width: 1000px;
-    margin: 20px auto 0 auto;
-    padding: 0 20px;
-    overflow-x: auto;
-  }
-  .position-table { border-collapse: collapse; width: 100%; min-width: 560px; }
-  .position-table th, .position-table td {
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-    text-align: left;
-  }
-  .position-table th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
-  .position-table select { padding: 5px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
-  .legend-row {
-    max-width: 1000px;
-    margin: 10px auto 0 auto;
-    padding: 0 20px;
-    font-size: 11.5px;
-    color: var(--muted);
-    line-height: 1.6;
-  }
-
   .quarters-grid {
     max-width: 1000px;
     margin: 20px auto 0 auto;
@@ -409,6 +385,86 @@
     display: flex;
     justify-content: flex-end;
   }
+
+  .quarter-tabs {
+    max-width: 1000px;
+    margin: 16px auto 0 auto;
+    padding: 0 20px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .quarter-tab {
+    padding: 9px 20px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 13.5px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .quarter-tab:hover { border-color: var(--accent); }
+  .quarter-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .court-wrap {
+    max-width: 1000px;
+    margin: 18px auto 0 auto;
+    padding: 0 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .court-zone {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .court-zone h4 {
+    margin: 0 0 12px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  .court-slots { display: flex; gap: 10px; flex-wrap: wrap; }
+  .court-slot {
+    flex: 1;
+    min-width: 130px;
+    background: #F7F8FB;
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    padding: 14px 10px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .court-slot:hover { border-color: var(--accent); }
+  .court-slot.filled { border-style: solid; background: #fff; }
+  .court-slot .slot-code {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent-dark);
+    letter-spacing: 0.03em;
+  }
+  .court-slot .slot-player { font-size: 14.5px; font-weight: 600; margin-top: 5px; }
+  .court-slot .slot-empty { font-size: 13px; color: var(--muted); margin-top: 5px; }
+
+  .bench-wrap { max-width: 1000px; margin: 16px auto 0 auto; padding: 0 20px; }
+  .bench-wrap h4 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+  .bench-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .bench-chip {
+    padding: 9px 16px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .bench-chip:hover { border-color: var(--accent); }
+  .bench-chip.nap { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+
+  .quarter-panel-single { max-width: 480px; margin: 20px auto 0 auto; padding: 0 20px; }
 </style>
 </head>
 <body>
@@ -948,39 +1004,119 @@ function PlannedGamesScreen({ clubId, role, onBack, onOpenGameDay, onCreateGame 
 }
 
 const QUARTERS = ["1", "2", "3", "4"];
-const POSITIONS = ["GS", "GA", "WA", "C", "WD", "GD", "GK", "OFF", "NAP"];
+const COURT_ZONES = [
+  { title: "Attack", codes: ["GS", "GA"] },
+  { title: "Centre", codes: ["WA", "C", "WD"] },
+  { title: "Defence", codes: ["GD", "GK"] },
+];
+const COURT_CODES = COURT_ZONES.reduce((all, zone) => all.concat(zone.codes), []);
+const POSITION_LABELS = {
+  GS: "Goal Shooter", GA: "Goal Attack", WA: "Wing Attack", C: "Centre",
+  WD: "Wing Defence", GD: "Goal Defence", GK: "Goal Keeper",
+};
 // Same 2-hour staleness window as the Android app's game lock guard (see
 // project notes) — a lock older than this is treated as abandoned.
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
-function PositionGrid({ players, positions, onChange }) {
+function PlayerPickerModal({ slotCode, currentPlayer, benchPlayers, onPick, onClear, onClose }) {
   return (
-    <div className="position-wrap">
-      <table className="position-table">
-        <thead>
-          <tr>
-            <th>Player</th>
-            {QUARTERS.map(q => <th key={q}>Q{q}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {players.map(name => (
-            <tr key={name}>
-              <td>{name}</td>
-              {QUARTERS.map(q => (
-                <td key={q}>
-                  <select
-                    value={(positions[q] && positions[q][name]) || "OFF"}
-                    onChange={e => onChange(q, name, e.target.value)}
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <h2>{slotCode} — {POSITION_LABELS[slotCode]}</h2>
+        <div className="modal-subtitle">Pick who's playing this position this quarter.</div>
+        {currentPlayer && (
+          <div className="availability-row">
+            <span>{currentPlayer} <span style={{ color: "var(--muted)" }}>(current)</span></span>
+            <button className="secondary" onClick={onClear}>Send to bench</button>
+          </div>
+        )}
+        {benchPlayers.length === 0 && !currentPlayer && (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>No one left on the bench to assign.</div>
+        )}
+        {benchPlayers.map(p => (
+          <div className="availability-row" key={p.name}>
+            <span>{p.name}{p.status === "NAP" ? <span style={{ color: "var(--danger)" }}> (Not Available)</span> : null}</span>
+            <button className="secondary" onClick={() => onPick(p.name)}>Select</button>
+          </div>
+        ))}
+        <div className="modal-actions">
+          <button className="secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CourtView({ q, players, positions, onAssign, onClearSlot, onToggleBench }) {
+  const [openSlot, setOpenSlot] = useState(null);
+  const qPositions = positions[q] || {};
+
+  const slotAssignments = {};
+  COURT_CODES.forEach(code => { slotAssignments[code] = null; });
+  players.forEach(name => {
+    const code = qPositions[name] || "OFF";
+    if (COURT_CODES.indexOf(code) !== -1) slotAssignments[code] = name;
+  });
+
+  const benchPlayers = players
+    .filter(name => COURT_CODES.indexOf(qPositions[name] || "OFF") === -1)
+    .map(name => ({ name, status: qPositions[name] === "NAP" ? "NAP" : "OFF" }));
+
+  return (
+    <div>
+      <div className="court-wrap">
+        {COURT_ZONES.map(zone => (
+          <div className="court-zone" key={zone.title}>
+            <h4>{zone.title}</h4>
+            <div className="court-slots">
+              {zone.codes.map(code => {
+                const playerName = slotAssignments[code];
+                return (
+                  <div
+                    key={code}
+                    className={"court-slot" + (playerName ? " filled" : "")}
+                    onClick={() => setOpenSlot(code)}
                   >
-                    {POSITIONS.map(code => <option key={code} value={code}>{code}</option>)}
-                  </select>
-                </td>
-              ))}
-            </tr>
+                    <div className="slot-code">{code}</div>
+                    {playerName ? (
+                      <div className="slot-player">{playerName}</div>
+                    ) : (
+                      <div className="slot-empty">Tap to assign</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bench-wrap">
+        <h4>Bench <span style={{ textTransform: "none", fontWeight: 400 }}>(tap a player to mark Not Available)</span></h4>
+        <div className="bench-chips">
+          {benchPlayers.length === 0 && <span style={{ color: "var(--muted)", fontSize: 13 }}>Everyone is on court.</span>}
+          {benchPlayers.map(p => (
+            <div
+              key={p.name}
+              className={"bench-chip" + (p.status === "NAP" ? " nap" : "")}
+              onClick={() => onToggleBench(q, p.name, p.status)}
+            >
+              {p.name}{p.status === "NAP" ? " · N/A" : ""}
+            </div>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+
+      {openSlot && (
+        <PlayerPickerModal
+          slotCode={openSlot}
+          currentPlayer={slotAssignments[openSlot]}
+          benchPlayers={benchPlayers}
+          onPick={name => { onAssign(q, openSlot, name); setOpenSlot(null); }}
+          onClear={() => { onClearSlot(q, slotAssignments[openSlot]); setOpenSlot(null); }}
+          onClose={() => setOpenSlot(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1036,6 +1172,7 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
   const [oppGoals, setOppGoals] = useState({ "1": 0, "2": 0, "3": 0, "4": 0 });
   const [turnovers, setTurnovers] = useState({ "1": 0, "2": 0, "3": 0, "4": 0 });
   const [notes, setNotes] = useState({ "1": "", "2": "", "3": "", "4": "" });
+  const [activeQuarter, setActiveQuarter] = useState("1");
 
   useEffect(() => {
     let cancelled = false;
@@ -1144,6 +1281,24 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
 
   function updatePosition(q, name, code) {
     setPositions(prev => ({ ...prev, [q]: { ...prev[q], [name]: code } }));
+  }
+  function assignSlot(q, code, name) {
+    setPositions(prev => {
+      const qMap = { ...prev[q] };
+      // Whoever was previously in this slot goes back to the bench.
+      Object.keys(qMap).forEach(pname => {
+        if (qMap[pname] === code && pname !== name) qMap[pname] = "OFF";
+      });
+      qMap[name] = code;
+      return { ...prev, [q]: qMap };
+    });
+  }
+  function clearSlot(q, name) {
+    if (!name) return;
+    setPositions(prev => ({ ...prev, [q]: { ...prev[q], [name]: "OFF" } }));
+  }
+  function toggleBenchStatus(q, name, currentStatus) {
+    setPositions(prev => ({ ...prev, [q]: { ...prev[q], [name]: currentStatus === "NAP" ? "OFF" : "NAP" } }));
   }
   function updateGoal(q, name, value) {
     setGoals(prev => ({ ...prev, [q]: { ...prev[q], [name]: value } }));
@@ -1266,34 +1421,47 @@ function GameDayScreen({ gameId, clubId, coachId, onBack }) {
       {errorMsg && <div className="banner error" style={{ maxWidth: 1000, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
       {infoMsg && <div className="banner info" style={{ maxWidth: 1000, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
 
-      <PositionGrid players={players} positions={positions} onChange={updatePosition} />
-      <div className="legend-row">
-        GS Goal Shooter · GA Goal Attack · WA Wing Attack · C Centre · WD Wing Defence · GD Goal Defence · GK Goal Keeper · OFF Bench · NAP Not Available
+      <div className="quarter-tabs">
+        {QUARTERS.map(q => (
+          <button
+            key={q}
+            className={"quarter-tab" + (activeQuarter === q ? " active" : "")}
+            onClick={() => setActiveQuarter(q)}
+          >
+            Quarter {q}
+          </button>
+        ))}
       </div>
 
-      <div className="quarters-grid">
-        {QUARTERS.map(q => (
-          <QuarterPanel
-            key={q}
-            q={q}
-            players={players}
-            positions={positions}
-            goals={goals}
-            oppGoals={oppGoals}
-            turnovers={turnovers}
-            notes={notes}
-            onGoalChange={updateGoal}
-            onOppGoalsChange={updateOppGoals}
-            onTurnoversChange={updateTurnovers}
-            onNotesChange={updateNotes}
-          />
-        ))}
+      <CourtView
+        q={activeQuarter}
+        players={players}
+        positions={positions}
+        onAssign={assignSlot}
+        onClearSlot={clearSlot}
+        onToggleBench={toggleBenchStatus}
+      />
+
+      <div className="quarter-panel-single">
+        <QuarterPanel
+          q={activeQuarter}
+          players={players}
+          positions={positions}
+          goals={goals}
+          oppGoals={oppGoals}
+          turnovers={turnovers}
+          notes={notes}
+          onGoalChange={updateGoal}
+          onOppGoalsChange={updateOppGoals}
+          onTurnoversChange={updateTurnovers}
+          onNotesChange={updateNotes}
+        />
       </div>
 
       <div className="gameday-actions">
         <button className="secondary" onClick={handleBack} disabled={saving}>Back</button>
         <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={saving} onClick={handleSaveDraft}>
-          {saving ? "Saving…" : "Save Draft"}
+          {saving ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
