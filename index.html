@@ -199,7 +199,7 @@
 <body>
 <div id="root"></div>
 
-<script type="text/babel" data-presets="react">
+<script type="text/plain" id="app-source">
 const { useState, useEffect, useCallback } = React;
 
 const SUPABASE_URL = "https://fkwoiaxmmjfegiltawkg.supabase.co";
@@ -634,6 +634,26 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+
+<script>
+  // The app source above is deliberately type="text/plain" (inert) rather than
+  // type="text/babel", so we can control Babel's options explicitly here.
+  // IMPORTANT: @babel/standalone's default JSX runtime is "automatic", which
+  // compiles JSX into `import { jsx } from "react/jsx-runtime"` — a real ES
+  // module import. That's meant for bundlers; loaded as a plain page (React
+  // brought in as a global via a CDN <script>, not a module), it throws
+  // "Cannot use import statement outside a module" and the whole app fails
+  // silently (blank page). Forcing the "classic" runtime compiles JSX into
+  // plain React.createElement(...) calls against the global React instead,
+  // which works correctly in this plain-script, no-bundler setup.
+  const appSource = document.getElementById("app-source").textContent;
+  const compiled = Babel.transform(appSource, {
+    presets: [["react", { runtime: "classic" }]],
+  }).code;
+  const script = document.createElement("script");
+  script.text = compiled;
+  document.body.appendChild(script);
 </script>
 </body>
 </html>
