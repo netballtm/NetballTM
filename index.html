@@ -739,7 +739,14 @@
   .report-skill-defs div { margin-bottom: 4px; }
   .report-skill-defs strong { color: var(--text); }
 
+  /* Evaluations report prints landscape (matches the app's own PDF export,
+     which uses A4 landscape for this report specifically) — a named CSS
+     page assigned via the `page` property, supported by Chrome's print/
+     Save-as-PDF pipeline. Every other report keeps the default portrait
+     page above. */
   @page { size: A4; margin: 14mm; }
+  @page evaluations-landscape { size: A4 landscape; margin: 12mm; }
+  .report-doc.landscape { page: evaluations-landscape; max-width: 1050px; }
   @media print {
     .report-doc { box-shadow: none; border-radius: 0; padding: 0; max-width: none; margin: 0; }
     .report-table thead th, .report-letterhead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -3280,10 +3287,10 @@ function StatsScreen({ clubId, onBack }) {
 // it through every component. ReportLetterhead is the logo+club name+
 // report-type block with a coloured rule underneath, standing in for the
 // Android app's branded PDF header.
-function ReportDoc({ clubSettings, children }) {
+function ReportDoc({ clubSettings, landscape, children }) {
   const accent = (clubSettings && clubSettings.primary_color) || null;
   return (
-    <div className="report-doc" style={accent ? { "--report-accent": accent } : undefined}>
+    <div className={"report-doc" + (landscape ? " landscape" : "")} style={accent ? { "--report-accent": accent } : undefined}>
       {children}
     </div>
   );
@@ -4054,7 +4061,7 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : (
-        <ReportDoc clubSettings={clubSettings}>
+        <ReportDoc clubSettings={clubSettings} landscape>
           <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Player Evaluations" meta={meta} />
 
           {evaluations.length === 0 ? (
