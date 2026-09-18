@@ -616,33 +616,81 @@
     body { background: #fff; }
   }
 
-  /* Report branding header (club logo/colour) + evaluation table styling —
-     added Sept 2026 so printed/PDF'd reports read closer to the Android
-     app's branded, tabular PDF exports instead of a plain on-screen view. */
-  .report-header {
+  /* Report document styling — rebuilt Sept 2026. First pass just put a
+     coloured banner on top of the existing app-UI card/pill styling, which
+     read as a screenshot with a header slapped on, not a document. This
+     version drops the dashboard chrome (rounded pill "cards", coloured
+     banner block) for every report and instead lays it out like an actual
+     printed page: a letterhead (logo + club name + report type, thin
+     rule underneath), real tables for anything list-shaped, and a plain
+     white page with sensible margins. `--report-accent` is set inline per
+     report from club_settings.primary_color (falls back to the site's own
+     accent) so headings/rules/rating colours pick it up via var(...). */
+  .report-doc {
+    --report-accent: var(--accent);
+    max-width: 760px;
+    margin: 20px auto 40px auto;
+    background: #fff;
+    padding: 36px 40px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .report-letterhead {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 16px 20px;
-    border-radius: 10px;
-    color: #fff;
-    margin: 4px 0 18px 0;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    gap: 16px;
+    padding-bottom: 14px;
+    margin-bottom: 20px;
+    border-bottom: 3px solid var(--report-accent);
   }
-  .report-header-logo { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,0.2); flex-shrink: 0; }
-  .report-header-title { font-size: 17px; font-weight: 700; }
-  .report-header-subtitle { font-size: 12.5px; opacity: 0.9; margin-top: 2px; }
-  .eval-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); margin: 4px 0 14px 0; }
-  .eval-legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .eval-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .eval-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
-  .eval-table th, .eval-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: middle; }
-  .eval-table th { background: var(--bg); font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); }
-  .eval-table td.rating { text-align: center; font-weight: 700; }
-  .eval-table td.comments { max-width: 220px; white-space: pre-wrap; }
+  .report-letterhead-logo { width: 52px; height: 52px; border-radius: 6px; object-fit: cover; flex-shrink: 0; }
+  .report-letterhead-club { font-size: 19px; font-weight: 800; color: var(--report-accent); line-height: 1.2; }
+  .report-letterhead-title { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 3px; }
+  .report-meta { font-size: 12.5px; color: var(--muted); margin: -12px 0 22px 0; }
+  .report-section-title {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--report-accent);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 5px;
+    margin: 26px 0 10px 0;
+  }
+  .report-section-title:first-of-type { margin-top: 0; }
+  .report-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .report-table th, .report-table td { padding: 7px 9px; text-align: left; border-bottom: 1px solid var(--border); }
+  .report-table thead th {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    border-bottom: 2px solid var(--report-accent);
+    padding-bottom: 6px;
+  }
+  .report-table tbody tr:last-child td { border-bottom: none; }
+  .report-table td.num, .report-table th.num { text-align: right; }
+  .report-table td.rating { text-align: center; font-weight: 700; }
+  .report-table td.comments { max-width: 220px; white-space: pre-wrap; }
+  .report-stat-strip { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 4px; }
+  .report-stat-strip > div { flex: 1; padding: 10px 12px; border-right: 1px solid var(--border); }
+  .report-stat-strip > div:last-child { border-right: none; }
+  .report-stat-strip label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
+  .report-stat-strip .value { font-size: 16px; font-weight: 700; }
+  .report-footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 10.5px; color: var(--muted); }
+  .report-empty { font-size: 13px; color: var(--muted); padding: 6px 0; }
+  .report-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin: 4px 0 12px 0; }
+  .report-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .report-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  @page { size: A4; margin: 14mm; }
   @media print {
-    .eval-table th { background: #F4F5F8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .report-doc { box-shadow: none; border-radius: 0; padding: 0; max-width: none; margin: 0; }
+    .report-table thead th, .report-letterhead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; }
   }
 </style>
 </head>
@@ -2715,22 +2763,36 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
   // History / Upcoming Games).
   async function handleDeleteSeason(season) {
     setErrorMsg(""); setInfoMsg("");
-    const [gamesRes, trainingRes, regRes] = await Promise.all([
+    // Real incident, Sept 2026: this check originally missed
+    // player_evaluations entirely, because Android can store an
+    // evaluation's season_name as several season names joined together
+    // (e.g. "Grading Winter 2026, Winter 2026") rather than one exact
+    // match — so a season whose only remaining link was an evaluation like
+    // that would sail through this guard undetected. It turned out fine
+    // that time (the evaluation data itself was untouched — only the
+    // season's own row went missing, breaking the picker), but the guard
+    // should actually catch this rather than rely on being lucky again.
+    // See evaluationCoversSeason for the same compound-name matching used
+    // by the Player Evaluations / Evaluations report screens.
+    const [gamesRes, trainingRes, regRes, evalRes] = await Promise.all([
       db.from("games").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season_name", season.name),
       db.from("training_sessions").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season", season.name),
       db.from("registrations").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season_id", season.id),
+      db.from("player_evaluations").select("season_name").eq("club_id", clubId),
     ]);
-    const checkErr = gamesRes.error || trainingRes.error || regRes.error;
+    const checkErr = gamesRes.error || trainingRes.error || regRes.error || evalRes.error;
     if (checkErr) { setErrorMsg(checkErr.message); return; }
     const gamesCount = gamesRes.count || 0;
     const trainingCount = trainingRes.count || 0;
     const regCount = regRes.count || 0;
-    if (gamesCount > 0 || trainingCount > 0 || regCount > 0) {
+    const evalCount = (evalRes.data || []).filter(e => evaluationCoversSeason(e.season_name, season.name)).length;
+    if (gamesCount > 0 || trainingCount > 0 || regCount > 0 || evalCount > 0) {
       const parts = [];
       if (gamesCount > 0) parts.push(gamesCount + " game" + (gamesCount === 1 ? "" : "s"));
       if (trainingCount > 0) parts.push(trainingCount + " training session" + (trainingCount === 1 ? "" : "s"));
       if (regCount > 0) parts.push(regCount + " registration" + (regCount === 1 ? "" : "s"));
-      setErrorMsg("Can't delete \"" + season.name + "\" — it still has " + parts.join(", ") + ". Remove those first (Delete Game on Game History, Delete Session on Training History) if this season really should go.");
+      if (evalCount > 0) parts.push(evalCount + " player evaluation" + (evalCount === 1 ? "" : "s"));
+      setErrorMsg("Can't delete \"" + season.name + "\" — it still has " + parts.join(", ") + ". Remove those first (Delete Game on Game History, Delete Session on Training History, Delete on Player Evaluations) if this season really should go.");
       return;
     }
     if (!window.confirm("Delete season \"" + season.name + "\"? This can't be undone.")) return;
@@ -3144,23 +3206,38 @@ function StatsScreen({ clubId, onBack }) {
   );
 }
 
-// Shared report branding banner — pulls colour/logo from club_settings
-// (now that Club Settings itself is built) so a printed report reads as
-// belonging to the club, closer to the Android app's branded PDF exports,
-// instead of a generic on-screen view. Renders even with no club_settings
-// row yet (falls back to the site's own accent colour, no logo).
-function ReportHeader({ clubSettings, title, subtitle }) {
-  const bg = (clubSettings && clubSettings.primary_color) || "#3F51B5";
+// Report document shell + letterhead — rebuilt Sept 2026 after the first
+// version (a coloured banner glued on top of the app's own dashboard-card
+// styling) read as a screenshot with a header on it rather than an actual
+// report. ReportDoc is the "page": a plain white sheet with sane margins
+// (see .report-doc CSS) carrying --report-accent so every child rule/
+// heading/table picks up the club's own primary_color without threading
+// it through every component. ReportLetterhead is the logo+club name+
+// report-type block with a coloured rule underneath, standing in for the
+// Android app's branded PDF header.
+function ReportDoc({ clubSettings, children }) {
+  const accent = (clubSettings && clubSettings.primary_color) || null;
   return (
-    <div className="report-header" style={{ background: bg }}>
-      {clubSettings && clubSettings.logo_base64 && (
-        <img src={"data:image/jpeg;base64," + clubSettings.logo_base64} alt="Club logo" className="report-header-logo" />
-      )}
-      <div>
-        <div className="report-header-title">{title}</div>
-        {subtitle && <div className="report-header-subtitle">{subtitle}</div>}
-      </div>
+    <div className="report-doc" style={accent ? { "--report-accent": accent } : undefined}>
+      {children}
     </div>
+  );
+}
+
+function ReportLetterhead({ clubSettings, clubName, reportTitle, meta }) {
+  return (
+    <React.Fragment>
+      <div className="report-letterhead">
+        {clubSettings && clubSettings.logo_base64 && (
+          <img src={"data:image/jpeg;base64," + clubSettings.logo_base64} alt="Club logo" className="report-letterhead-logo" />
+        )}
+        <div>
+          <div className="report-letterhead-club">{clubName}</div>
+          <div className="report-letterhead-title">{reportTitle}</div>
+        </div>
+      </div>
+      {meta && <div className="report-meta">{meta}</div>}
+    </React.Fragment>
   );
 }
 
@@ -3256,62 +3333,79 @@ function SeasonReportView({ clubId, clubName, seasons, clubSettings }) {
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : (
-        <div className="session-form" style={{ maxWidth: 700 }}>
-          <ReportHeader clubSettings={clubSettings} title={clubName + " — Season Report"} subtitle={seasonName} />
+        <ReportDoc clubSettings={clubSettings}>
+          <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Season Report" meta={seasonName} />
 
-          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
-            <div className="quick-stat"><label>Wins</label>{wins}</div>
-            <div className="quick-stat"><label>Losses</label>{losses}</div>
-            <div className="quick-stat"><label>Draws</label>{draws}</div>
-            {byes > 0 && <div className="quick-stat"><label>Byes</label>{byes}</div>}
-            <div className="quick-stat">
-              <label>Avg Training Attendance</label>
-              <span style={{ color: pctColor(avgAttendance, clubSettings), fontWeight: 700 }}>
+          <div className="report-stat-strip">
+            <div><label>Wins</label><span className="value">{wins}</span></div>
+            <div><label>Losses</label><span className="value">{losses}</span></div>
+            <div><label>Draws</label><span className="value">{draws}</span></div>
+            {byes > 0 && <div><label>Byes</label><span className="value">{byes}</span></div>}
+            <div>
+              <label>Avg Training</label>
+              <span className="value" style={{ color: pctColor(avgAttendance, clubSettings) }}>
                 {avgAttendance === null ? "—" : avgAttendance + "%"}
               </span>
             </div>
           </div>
-          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
-            <div className="quick-stat"><label>Goals For</label>{goalsFor}</div>
-            <div className="quick-stat"><label>Goals Against</label>{goalsAgainst}</div>
-            <div className="quick-stat"><label>Margin</label>{goalsFor - goalsAgainst > 0 ? "+" : ""}{goalsFor - goalsAgainst}</div>
+          <div className="report-stat-strip">
+            <div><label>Goals For</label><span className="value">{goalsFor}</span></div>
+            <div><label>Goals Against</label><span className="value">{goalsAgainst}</span></div>
+            <div><label>Margin</label><span className="value">{goalsFor - goalsAgainst > 0 ? "+" : ""}{goalsFor - goalsAgainst}</span></div>
           </div>
 
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Results</h3>
+          <div className="report-section-title">Game Results</div>
           {playedGames.length === 0 ? (
-            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No completed games this season.</div>
+            <div className="report-empty">No completed games this season.</div>
           ) : (
-            playedGames.slice().sort((a, b) => a.round - b.round).map(g => (
-              <div key={g.id} className="availability-row">
-                <span>Round {g.round} vs {g.opponent}{g.game_date ? " · " + g.game_date : ""}</span>
-                <span>{g.our_score} - {g.opponent_score}</span>
-              </div>
-            ))
+            <table className="report-table">
+              <thead><tr><th>Round</th><th>Opponent</th><th>Date</th><th className="num">Score</th></tr></thead>
+              <tbody>
+                {playedGames.slice().sort((a, b) => a.round - b.round).map(g => (
+                  <tr key={g.id}>
+                    <td>{g.round}</td>
+                    <td>{g.opponent}</td>
+                    <td>{g.game_date || "—"}</td>
+                    <td className="num">{g.our_score} - {g.opponent_score}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
 
           {topScorers.length > 0 && (
             <React.Fragment>
-              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Top Scorers</h3>
-              {topScorers.map(([name, goals]) => (
-                <div key={name} className="availability-row"><span>{name}</span><span>{goals}</span></div>
-              ))}
+              <div className="report-section-title">Top Scorers</div>
+              <table className="report-table">
+                <tbody>
+                  {topScorers.map(([name, goals]) => (
+                    <tr key={name}><td>{name}</td><td className="num">{goals}</td></tr>
+                  ))}
+                </tbody>
+              </table>
             </React.Fragment>
           )}
 
           {potmLeaders.length > 0 && (
             <React.Fragment>
-              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Player of the Match</h3>
-              {potmLeaders.map(([name, count]) => (
-                <div key={name} className="availability-row"><span>{name}</span><span>{count}&times;</span></div>
-              ))}
+              <div className="report-section-title">Player of the Match</div>
+              <table className="report-table">
+                <tbody>
+                  {potmLeaders.map(([name, count]) => (
+                    <tr key={name}><td>{name}</td><td className="num">{count}&times;</td></tr>
+                  ))}
+                </tbody>
+              </table>
             </React.Fragment>
           )}
 
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Training</h3>
-          <div style={{ fontSize: 13.5 }}>
+          <div className="report-section-title">Training</div>
+          <div style={{ fontSize: 13 }}>
             {sessions.length} session{sessions.length === 1 ? "" : "s"} recorded, {sessions.length - activeSessions.length} cancelled.
           </div>
-        </div>
+
+          <div className="report-footer">Generated {new Date().toLocaleDateString()} · {clubName}</div>
+        </ReportDoc>
       )}
     </div>
   );
@@ -3387,46 +3481,47 @@ function GameReportView({ clubId, clubName, seasons, clubSettings }) {
       ) : !game ? (
         <div className="empty-note">No completed games for this season yet.</div>
       ) : (
-        <div className="session-form" style={{ maxWidth: 700 }}>
-          <ReportHeader
+        <ReportDoc clubSettings={clubSettings}>
+          <ReportLetterhead
             clubSettings={clubSettings}
-            title={clubName + " — Game Report"}
-            subtitle={seasonName + " · Round " + game.round + " vs " + game.opponent + (game.game_date ? " · " + game.game_date : "")}
+            clubName={clubName}
+            reportTitle="Game Report"
+            meta={seasonName + " · Round " + game.round + " vs " + game.opponent + (game.game_date ? " · " + game.game_date : "")}
           />
 
-          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
-            <div className="quick-stat"><label>Final Score</label>{game.our_score} - {game.opponent_score}</div>
+          <div className="report-stat-strip">
+            <div><label>Final Score</label><span className="value">{game.our_score} - {game.opponent_score}</span></div>
           </div>
 
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>By Quarter</h3>
-          {QUARTERS.map(q => {
-            const qGoals = (game.goals_by_quarter && game.goals_by_quarter[q]) || {};
-            const scorers = Object.entries(qGoals).filter(([, v]) => Number(v) > 0);
-            const ourQ = scorers.reduce((sum, [, v]) => sum + Number(v), 0);
-            const oppQ = (game.opponent_goals_by_quarter && game.opponent_goals_by_quarter[q]) || 0;
-            const turnoversQ = (game.turnovers_by_quarter && game.turnovers_by_quarter[q]) || 0;
-            const noteQ = (game.quarter_notes && game.quarter_notes[q]) || "";
-            return (
-              <div key={q} className="availability-row" style={{ display: "block", padding: "10px 0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
-                  <span>Quarter {q}</span>
-                  <span>{ourQ} - {oppQ}{turnoversQ ? " · Turnovers: " + turnoversQ : ""}</span>
-                </div>
-                {scorers.length > 0 && (
-                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
-                    Goals: {scorers.map(([n, v]) => n + " (" + v + ")").join(", ")}
-                  </div>
-                )}
-                {noteQ && <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>{noteQ}</div>}
-              </div>
-            );
-          })}
+          <div className="report-section-title">By Quarter</div>
+          <table className="report-table">
+            <thead><tr><th>Qtr</th><th className="num">Score</th><th className="num">Turnovers</th><th>Scorers</th><th>Notes</th></tr></thead>
+            <tbody>
+              {QUARTERS.map(q => {
+                const qGoals = (game.goals_by_quarter && game.goals_by_quarter[q]) || {};
+                const scorers = Object.entries(qGoals).filter(([, v]) => Number(v) > 0);
+                const ourQ = scorers.reduce((sum, [, v]) => sum + Number(v), 0);
+                const oppQ = (game.opponent_goals_by_quarter && game.opponent_goals_by_quarter[q]) || 0;
+                const turnoversQ = (game.turnovers_by_quarter && game.turnovers_by_quarter[q]) || 0;
+                const noteQ = (game.quarter_notes && game.quarter_notes[q]) || "";
+                return (
+                  <tr key={q}>
+                    <td>{q}</td>
+                    <td className="num">{ourQ} - {oppQ}</td>
+                    <td className="num">{turnoversQ || "—"}</td>
+                    <td>{scorers.length > 0 ? scorers.map(([n, v]) => n + " (" + v + ")").join(", ") : "—"}</td>
+                    <td>{noteQ || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
 
           {(game.players_of_match || []).length > 0 && (
             <React.Fragment>
-              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Player of the Match</h3>
+              <div className="report-section-title">Player of the Match</div>
               {(game.players_of_match || []).map(name => (
-                <div key={name} style={{ fontSize: 13.5, padding: "8px 0" }}>
+                <div key={name} style={{ padding: "8px 0" }}>
                   <strong>{name}</strong>
                   {(game.potm_comments || {})[name] ? " — " + game.potm_comments[name] : ""}
                   {potmPhotoUrls[name] && (
@@ -3436,7 +3531,9 @@ function GameReportView({ clubId, clubName, seasons, clubSettings }) {
               ))}
             </React.Fragment>
           )}
-        </div>
+
+          <div className="report-footer">Generated {new Date().toLocaleDateString()} · {clubName}</div>
+        </ReportDoc>
       )}
     </div>
   );
@@ -3509,45 +3606,48 @@ function PlayerReportView({ clubId, clubName, seasons, players, clubSettings }) 
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : (
-        <div className="session-form" style={{ maxWidth: 700 }}>
-          <ReportHeader clubSettings={clubSettings} title={clubName + " — Player Report"} subtitle={playerName + " · " + seasonName} />
+        <ReportDoc clubSettings={clubSettings}>
+          <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Player Report" meta={playerName + " · " + seasonName} />
 
-          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
-            <div className="quick-stat"><label>Games Played</label>{gamesPlayedCount}</div>
-            <div className="quick-stat"><label>Goals</label>{totalGoals}</div>
-            <div className="quick-stat"><label>Player of the Match</label>{potmCount}&times;</div>
-            <div className="quick-stat">
+          <div className="report-stat-strip">
+            <div><label>Games Played</label><span className="value">{gamesPlayedCount}</span></div>
+            <div><label>Goals</label><span className="value">{totalGoals}</span></div>
+            <div><label>Player of the Match</label><span className="value">{potmCount}&times;</span></div>
+            <div>
               <label>Training Attendance</label>
-              <span style={{ color: pctColor(trainingPct, clubSettings), fontWeight: 700 }}>
+              <span className="value" style={{ color: pctColor(trainingPct, clubSettings) }}>
                 {trainingPct === null ? "—" : trainingPct + "%"}
               </span>
             </div>
           </div>
           {bestGame && bestGame.goals > 0 && (
-            <div className="muted-hint" style={{ marginBottom: 16 }}>
+            <div className="muted-hint" style={{ margin: "8px 0 4px 0" }}>
               Best game: {bestGame.goals} goals vs {bestGame.game.opponent} (Round {bestGame.game.round})
             </div>
           )}
 
-          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Log</h3>
+          <div className="report-section-title">Game Log</div>
           {gamesGoals.length === 0 ? (
-            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No games recorded for this player this season.</div>
+            <div className="report-empty">No games recorded for this player this season.</div>
           ) : (
-            gamesGoals.slice().sort((a, b) => a.game.round - b.game.round).map(({ game, goals, byQuarter, wasAvailable, wasPotm }) => (
-              <div key={game.id} className="availability-row" style={{ display: "block", padding: "10px 0" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
-                  <span>Round {game.round} vs {game.opponent}{!wasAvailable ? " (unavailable)" : ""}{wasPotm ? " ⭐" : ""}</span>
-                  <span>{goals > 0 ? goals + " goals" : "—"}</span>
-                </div>
-                {goals > 0 && (
-                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
-                    By quarter: {QUARTERS.map(q => "Q" + q + ": " + (byQuarter[q] || 0)).join("  ·  ")}
-                  </div>
-                )}
-              </div>
-            ))
+            <table className="report-table">
+              <thead><tr><th>Round</th><th>Opponent</th><th>Status</th><th className="num">Goals</th><th>By Quarter</th></tr></thead>
+              <tbody>
+                {gamesGoals.slice().sort((a, b) => a.game.round - b.game.round).map(({ game, goals, byQuarter, wasAvailable, wasPotm }) => (
+                  <tr key={game.id}>
+                    <td>{game.round}</td>
+                    <td>{game.opponent}</td>
+                    <td>{!wasAvailable ? "Unavailable" : wasPotm ? "POTM ⭐" : "—"}</td>
+                    <td className="num">{goals > 0 ? goals : "—"}</td>
+                    <td>{goals > 0 ? QUARTERS.map(q => "Q" + q + ": " + (byQuarter[q] || 0)).join("  ·  ") : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
-        </div>
+
+          <div className="report-footer">Generated {new Date().toLocaleDateString()} · {clubName}</div>
+        </ReportDoc>
       )}
     </div>
   );
@@ -3568,14 +3668,19 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg("");
+    // See evaluationCoversSeason above — an evaluation covering this season
+    // may be stored under a compound "SeasonA, SeasonB" season_name, which
+    // a plain .eq() would miss entirely. Fetch all for the club and filter
+    // client-side instead, same fix as Player Evaluations.
     const { data, error: evalErr } = await db
       .from("player_evaluations")
       .select("*")
-      .eq("club_id", clubId)
-      .eq("season_name", seasonName)
-      .order("player_name", { ascending: true });
+      .eq("club_id", clubId);
     if (evalErr) { setErrorMsg(evalErr.message); setLoading(false); return; }
-    setEvaluations(data || []);
+    const forThisSeason = (data || [])
+      .filter(e => evaluationCoversSeason(e.season_name, seasonName))
+      .sort((a, b) => a.player_name.localeCompare(b.player_name));
+    setEvaluations(forThisSeason);
     setLoading(false);
   }, [clubId, seasonName]);
 
@@ -3600,20 +3705,20 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : (
-        <div className="session-form" style={{ maxWidth: 1000 }}>
-          <ReportHeader clubSettings={clubSettings} title={clubName + " — Player Evaluations"} subtitle={seasonName} />
+        <ReportDoc clubSettings={clubSettings}>
+          <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Player Evaluations" meta={seasonName} />
 
           {evaluations.length === 0 ? (
-            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No evaluations recorded for this season yet — add some under "Player Evaluations".</div>
+            <div className="report-empty">No evaluations recorded for this season yet — add some under "Player Evaluations".</div>
           ) : (
             <React.Fragment>
-              <div className="eval-legend">
+              <div className="report-legend">
                 <span><span className="dot" style={{ background: "var(--danger)" }}></span> 1-2 Needs work</span>
                 <span><span className="dot" style={{ background: (clubSettings && clubSettings.primary_color) || "var(--accent)" }}></span> 3 Developing</span>
                 <span><span className="dot" style={{ background: "var(--success)" }}></span> 4-5 Strong</span>
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table className="eval-table">
+                <table className="report-table">
                   <thead>
                     <tr>
                       <th>Player</th>
@@ -3633,7 +3738,12 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
                   <tbody>
                     {evaluations.map(ev => (
                       <tr key={ev.id}>
-                        <td>{ev.player_name}</td>
+                        <td>
+                          {ev.player_name}
+                          {ev.season_name !== seasonName && (
+                            <div className="muted-hint">also covers: {ev.season_name.split(",").map(s => s.trim()).filter(s => s !== seasonName).join(", ")}</div>
+                          )}
+                        </td>
                         <td className="rating" style={{ color: ratingColor(ev.ball_skills, clubSettings) }}>{ev.ball_skills}</td>
                         <td className="rating" style={{ color: ratingColor(ev.attacking, clubSettings) }}>{ev.attacking}</td>
                         <td className="rating" style={{ color: ratingColor(ev.defense, clubSettings) }}>{ev.defense}</td>
@@ -3652,7 +3762,9 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
               </div>
             </React.Fragment>
           )}
-        </div>
+
+          <div className="report-footer">Generated {new Date().toLocaleDateString()} · {clubName}</div>
+        </ReportDoc>
       )}
     </div>
   );
@@ -3676,7 +3788,7 @@ function ReportsScreen({ clubId, clubName, onBack }) {
       if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
       if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
       // club_settings may not have a row yet (never saved) — that's fine,
-      // ReportHeader/pctColor both fall back cleanly to generic colours.
+      // ReportDoc/ReportLetterhead/pctColor all fall back cleanly to generic colours.
       if (!settingsRes.error) setClubSettings(settingsRes.data || null);
       setSeasons(seasonsRes.data || []);
       setPlayers(playersRes.data || []);
@@ -3861,6 +3973,22 @@ function ClubSettingsScreen({ clubId, onBack, onSaved }) {
   );
 }
 
+// Real incident, Sept 2026: Allan deleted the (apparently unused) "Grading
+// Winter 2026" season and worried he'd lost that season's evaluations.
+// Turned out nothing was lost — the Android app's evaluation screens save
+// `season_name` as EITHER one season's name OR several season names joined
+// with ", " (sorted) when one evaluation covers multiple seasons, e.g.
+// "Grading Winter 2026, Winter 2026" for a player evaluated once across
+// both. The web hub's evaluation screens originally queried with a plain
+// `.eq("season_name", seasonName)`, which can never match a compound value
+// — so any evaluation spanning more than one season was invisible here
+// even though the row was completely intact. Fix: never filter this table
+// by exact season_name match; always fetch and check whether the target
+// season is one of the comma-separated components instead.
+function evaluationCoversSeason(evaluationSeasonName, targetSeasonName) {
+  return (evaluationSeasonName || "").split(",").map(s => s.trim()).includes(targetSeasonName);
+}
+
 // Player Evaluations — column names confirmed via information_schema.columns
 // (Sept 2026). Unique on (club_id, season_name, player_name), so picking a
 // season + player either loads that existing evaluation or starts a blank
@@ -3882,7 +4010,14 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
   const [errorMsg, setErrorMsg] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
 
-  const blankForm = () => ({
+  const blankForm = (seasonKey) => ({
+    // evalSeasonKey is the ACTUAL season_name value Save will write —
+    // normally just the selected season, but if an existing row already
+    // covers this season under a compound name (see evaluationCoversSeason
+    // above), it's switched to that exact compound string instead, so
+    // saving an edit never splits one multi-season evaluation into two
+    // separate rows.
+    evalSeasonKey: seasonKey,
     evaluationDate: new Date().toISOString().slice(0, 10),
     ageGroup: "",
     ballSkills: 3, attacking: 3, defense: 3, perception: 3, footwork: 3,
@@ -3892,7 +4027,7 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
     comments: "",
     trainingAttendance: 0, trainingTotal: 0, gameAttendance: 0, gameTotal: 0,
   });
-  const [form, setForm] = useState(blankForm());
+  const [form, setForm] = useState(blankForm(""));
 
   useEffect(() => {
     (async () => {
@@ -3914,14 +4049,19 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
     if (!seasonName) return;
     setLoading(true);
     setErrorMsg("");
+    // Deliberately does NOT filter by season_name in the query itself (see
+    // evaluationCoversSeason above) — an evaluation covering this season
+    // might be stored under a compound "SeasonA, SeasonB" string, which a
+    // plain .eq() would never match. Filtering happens client-side instead.
     const { data, error: evalErr } = await db
       .from("player_evaluations")
       .select("*")
-      .eq("club_id", clubId)
-      .eq("season_name", seasonName)
-      .order("player_name", { ascending: true });
+      .eq("club_id", clubId);
     if (evalErr) { setErrorMsg(evalErr.message); setLoading(false); return; }
-    setEvaluations(data || []);
+    const forThisSeason = (data || [])
+      .filter(e => evaluationCoversSeason(e.season_name, seasonName))
+      .sort((a, b) => a.player_name.localeCompare(b.player_name));
+    setEvaluations(forThisSeason);
     setLoading(false);
   }, [clubId, seasonName]);
 
@@ -3936,6 +4076,10 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
       const existing = evaluations.find(e => e.player_name === playerName);
       if (existing) {
         setForm({
+          // Preserve the row's real (possibly compound, e.g. "Grading
+          // Winter 2026, Winter 2026") season_name so Save updates this
+          // exact row instead of splitting it into a new single-season one.
+          evalSeasonKey: existing.season_name,
           evaluationDate: existing.evaluation_date || new Date().toISOString().slice(0, 10),
           ageGroup: existing.age_group || "",
           ballSkills: existing.ball_skills == null ? 3 : existing.ball_skills,
@@ -3972,7 +4116,7 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
       const trainingTotal = sessions.length;
       const trainingAttendance = sessions.filter(s => (s.attendance || {})[playerName] === true).length;
       setForm({
-        ...blankForm(),
+        ...blankForm(seasonName),
         ageGroup: (activeSeason && activeSeason.team_name) || "",
         trainingAttendance, trainingTotal, gameAttendance, gameTotal,
       });
@@ -3995,9 +4139,14 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
     if (!seasonName || !playerName) return;
     setSaving(true);
     setErrorMsg(""); setInfoMsg("");
+    // Uses form.evalSeasonKey, not the plain selected seasonName — for an
+    // existing evaluation that already covers this season under a compound
+    // name (e.g. "Grading Winter 2026, Winter 2026"), this keeps updating
+    // that same row instead of forking off a new single-season duplicate.
+    const seasonKeyToSave = form.evalSeasonKey || seasonName;
     const { error: saveErr } = await db.from("player_evaluations").upsert({
       club_id: clubId,
-      season_name: seasonName,
+      season_name: seasonKeyToSave,
       player_name: playerName,
       evaluation_date: form.evaluationDate,
       age_group: form.ageGroup,
@@ -4018,19 +4167,22 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
     }, { onConflict: "club_id,season_name,player_name" });
     setSaving(false);
     if (saveErr) { setErrorMsg(saveErr.message); return; }
-    setInfoMsg("Saved evaluation for " + playerName + ".");
+    setInfoMsg(
+      "Saved evaluation for " + playerName + "." +
+      (seasonKeyToSave !== seasonName ? " (This evaluation also covers: " + seasonKeyToSave + ")" : "")
+    );
     await loadForSeason();
   }
 
   async function handleDelete(evaluation) {
-    if (!window.confirm("Delete the evaluation for " + evaluation.player_name + " (" + seasonName + ")? This can't be undone.")) return;
+    if (!window.confirm("Delete the evaluation for " + evaluation.player_name + " (" + evaluation.season_name + ")? This can't be undone.")) return;
     setDeletingId(evaluation.id);
     setErrorMsg(""); setInfoMsg("");
     const { error: delErr } = await db.from("player_evaluations").delete().eq("id", evaluation.id).eq("club_id", clubId);
     setDeletingId(null);
     if (delErr) { setErrorMsg(delErr.message); return; }
     setInfoMsg("Deleted evaluation for " + evaluation.player_name + ".");
-    if (evaluation.player_name === playerName) setForm(blankForm());
+    if (evaluation.player_name === playerName) setForm(blankForm(seasonName));
     await loadForSeason();
   }
 
@@ -4145,10 +4297,15 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
 
           {evaluations.length > 0 && (
             <div className="session-form" style={{ maxWidth: 700, marginTop: 10 }}>
-              <div className="muted-hint" style={{ marginBottom: 6 }}>Saved evaluations for {seasonName}:</div>
+              <div className="muted-hint" style={{ marginBottom: 6 }}>Evaluations covering {seasonName} ({evaluations.length}):</div>
               {evaluations.map(ev => (
                 <div key={ev.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                  <span>{ev.player_name} — {ev.skill_level}</span>
+                  <span>
+                    {ev.player_name} — {ev.skill_level}
+                    {ev.season_name !== seasonName && (
+                      <span className="muted-hint" style={{ marginLeft: 6 }}>(recorded under: {ev.season_name})</span>
+                    )}
+                  </span>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button className="secondary" style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }} onClick={() => setPlayerName(ev.player_name)}>
                       View / Edit
