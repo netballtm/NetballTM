@@ -615,6 +615,35 @@
     }
     body { background: #fff; }
   }
+
+  /* Report branding header (club logo/colour) + evaluation table styling —
+     added Sept 2026 so printed/PDF'd reports read closer to the Android
+     app's branded, tabular PDF exports instead of a plain on-screen view. */
+  .report-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-radius: 10px;
+    color: #fff;
+    margin: 4px 0 18px 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .report-header-logo { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: rgba(255,255,255,0.2); flex-shrink: 0; }
+  .report-header-title { font-size: 17px; font-weight: 700; }
+  .report-header-subtitle { font-size: 12.5px; opacity: 0.9; margin-top: 2px; }
+  .eval-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); margin: 4px 0 14px 0; }
+  .eval-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .eval-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .eval-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  .eval-table th, .eval-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: middle; }
+  .eval-table th { background: var(--bg); font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); }
+  .eval-table td.rating { text-align: center; font-weight: 700; }
+  .eval-table td.comments { max-width: 220px; white-space: pre-wrap; }
+  @media print {
+    .eval-table th { background: #F4F5F8 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
 </style>
 </head>
 <body>
@@ -3115,7 +3144,48 @@ function StatsScreen({ clubId, onBack }) {
   );
 }
 
-function SeasonReportView({ clubId, clubName, seasons }) {
+// Shared report branding banner — pulls colour/logo from club_settings
+// (now that Club Settings itself is built) so a printed report reads as
+// belonging to the club, closer to the Android app's branded PDF exports,
+// instead of a generic on-screen view. Renders even with no club_settings
+// row yet (falls back to the site's own accent colour, no logo).
+function ReportHeader({ clubSettings, title, subtitle }) {
+  const bg = (clubSettings && clubSettings.primary_color) || "#3F51B5";
+  return (
+    <div className="report-header" style={{ background: bg }}>
+      {clubSettings && clubSettings.logo_base64 && (
+        <img src={"data:image/jpeg;base64," + clubSettings.logo_base64} alt="Club logo" className="report-header-logo" />
+      )}
+      <div>
+        <div className="report-header-title">{title}</div>
+        {subtitle && <div className="report-header-subtitle">{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Same colour-coding convention as the Android app's TrainingAttendancePdfExporter:
+// green at 90%+, the club's own primary colour at 50%+, red below that.
+function pctColor(pct, clubSettings) {
+  if (pct === null || pct === undefined) return "var(--muted)";
+  if (pct >= 90) return "var(--success)";
+  if (pct >= 50) return (clubSettings && clubSettings.primary_color) || "var(--accent)";
+  return "var(--danger)";
+}
+
+// Rating colour scale for the Evaluations report — the app's exporter
+// draws ratings as "bold coloured numbers" but the exact colour cutoffs
+// weren't in the confirmed schema (there's no column for them), so this
+// is a reasonable low/mid/high split, easy to retune once compared
+// side-by-side with a real app-exported evaluation PDF.
+function ratingColor(value, clubSettings) {
+  const n = Number(value);
+  if (n >= 4) return "var(--success)";
+  if (n <= 2) return "var(--danger)";
+  return (clubSettings && clubSettings.primary_color) || "var(--accent)";
+}
+
+function SeasonReportView({ clubId, clubName, seasons, clubSettings }) {
   const [seasonName, setSeasonName] = useState(seasons[0].name);
   const [games, setGames] = useState([]);
   const [sessions, setSessions] = useState([]);
@@ -3187,15 +3257,19 @@ function SeasonReportView({ clubId, clubName, seasons }) {
         <div className="empty-note">Loading…</div>
       ) : (
         <div className="session-form" style={{ maxWidth: 700 }}>
-          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Season Report</h2>
-          <div className="muted-hint" style={{ marginBottom: 16 }}>{seasonName}</div>
+          <ReportHeader clubSettings={clubSettings} title={clubName + " — Season Report"} subtitle={seasonName} />
 
           <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
             <div className="quick-stat"><label>Wins</label>{wins}</div>
             <div className="quick-stat"><label>Losses</label>{losses}</div>
             <div className="quick-stat"><label>Draws</label>{draws}</div>
             {byes > 0 && <div className="quick-stat"><label>Byes</label>{byes}</div>}
-            <div className="quick-stat"><label>Avg Training Attendance</label>{avgAttendance === null ? "—" : avgAttendance + "%"}</div>
+            <div className="quick-stat">
+              <label>Avg Training Attendance</label>
+              <span style={{ color: pctColor(avgAttendance, clubSettings), fontWeight: 700 }}>
+                {avgAttendance === null ? "—" : avgAttendance + "%"}
+              </span>
+            </div>
           </div>
           <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
             <div className="quick-stat"><label>Goals For</label>{goalsFor}</div>
@@ -3243,7 +3317,7 @@ function SeasonReportView({ clubId, clubName, seasons }) {
   );
 }
 
-function GameReportView({ clubId, clubName, seasons }) {
+function GameReportView({ clubId, clubName, seasons, clubSettings }) {
   const [seasonName, setSeasonName] = useState(seasons[0].name);
   const [games, setGames] = useState([]);
   const [gameId, setGameId] = useState("");
@@ -3314,10 +3388,11 @@ function GameReportView({ clubId, clubName, seasons }) {
         <div className="empty-note">No completed games for this season yet.</div>
       ) : (
         <div className="session-form" style={{ maxWidth: 700 }}>
-          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Game Report</h2>
-          <div className="muted-hint" style={{ marginBottom: 16 }}>
-            {seasonName} · Round {game.round} vs {game.opponent}{game.game_date ? " · " + game.game_date : ""}
-          </div>
+          <ReportHeader
+            clubSettings={clubSettings}
+            title={clubName + " — Game Report"}
+            subtitle={seasonName + " · Round " + game.round + " vs " + game.opponent + (game.game_date ? " · " + game.game_date : "")}
+          />
 
           <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
             <div className="quick-stat"><label>Final Score</label>{game.our_score} - {game.opponent_score}</div>
@@ -3367,7 +3442,7 @@ function GameReportView({ clubId, clubName, seasons }) {
   );
 }
 
-function PlayerReportView({ clubId, clubName, seasons, players }) {
+function PlayerReportView({ clubId, clubName, seasons, players, clubSettings }) {
   const [seasonName, setSeasonName] = useState(seasons[0].name);
   const [playerName, setPlayerName] = useState(players.length > 0 ? players[0].name : "");
   const [games, setGames] = useState([]);
@@ -3435,14 +3510,18 @@ function PlayerReportView({ clubId, clubName, seasons, players }) {
         <div className="empty-note">Loading…</div>
       ) : (
         <div className="session-form" style={{ maxWidth: 700 }}>
-          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Player Report</h2>
-          <div className="muted-hint" style={{ marginBottom: 16 }}>{playerName} · {seasonName}</div>
+          <ReportHeader clubSettings={clubSettings} title={clubName + " — Player Report"} subtitle={playerName + " · " + seasonName} />
 
           <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
             <div className="quick-stat"><label>Games Played</label>{gamesPlayedCount}</div>
             <div className="quick-stat"><label>Goals</label>{totalGoals}</div>
             <div className="quick-stat"><label>Player of the Match</label>{potmCount}&times;</div>
-            <div className="quick-stat"><label>Training Attendance</label>{trainingPct === null ? "—" : trainingPct + "%"}</div>
+            <div className="quick-stat">
+              <label>Training Attendance</label>
+              <span style={{ color: pctColor(trainingPct, clubSettings), fontWeight: 700 }}>
+                {trainingPct === null ? "—" : trainingPct + "%"}
+              </span>
+            </div>
           </div>
           {bestGame && bestGame.goals > 0 && (
             <div className="muted-hint" style={{ marginBottom: 16 }}>
@@ -3474,21 +3553,131 @@ function PlayerReportView({ clubId, clubName, seasons, players }) {
   );
 }
 
+// Evaluations report — a printable table mirroring the Android app's
+// EvaluationPdfExporter column order (Player, the five 1-5 ratings,
+// Training %, Games %, Skill Level, Position(s), Next Season, Comments),
+// built once Player Evaluations itself existed. Reuses the confirmed
+// player_evaluations schema directly — no new queries beyond what the
+// Player Evaluations screen already uses.
+function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
+  const [seasonName, setSeasonName] = useState(seasons[0].name);
+  const [evaluations, setEvaluations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg("");
+    const { data, error: evalErr } = await db
+      .from("player_evaluations")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season_name", seasonName)
+      .order("player_name", { ascending: true });
+    if (evalErr) { setErrorMsg(evalErr.message); setLoading(false); return; }
+    setEvaluations(data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const fmtPct = (attended, total) => {
+    if (!total) return "—";
+    return Math.round((attended / total) * 100) + "% (" + attended + "/" + total + ")";
+  };
+
+  return (
+    <div>
+      <div className="season-select-row" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+          {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+        </select>
+        {evaluations.length > 0 && <button className="secondary no-print" onClick={() => window.print()}>Print / Save as PDF</button>}
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 1000 }}>
+          <ReportHeader clubSettings={clubSettings} title={clubName + " — Player Evaluations"} subtitle={seasonName} />
+
+          {evaluations.length === 0 ? (
+            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No evaluations recorded for this season yet — add some under "Player Evaluations".</div>
+          ) : (
+            <React.Fragment>
+              <div className="eval-legend">
+                <span><span className="dot" style={{ background: "var(--danger)" }}></span> 1-2 Needs work</span>
+                <span><span className="dot" style={{ background: (clubSettings && clubSettings.primary_color) || "var(--accent)" }}></span> 3 Developing</span>
+                <span><span className="dot" style={{ background: "var(--success)" }}></span> 4-5 Strong</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="eval-table">
+                  <thead>
+                    <tr>
+                      <th>Player</th>
+                      <th>Ball Skills</th>
+                      <th>Attacking</th>
+                      <th>Defense</th>
+                      <th>Perception</th>
+                      <th>Footwork</th>
+                      <th>Training %</th>
+                      <th>Games %</th>
+                      <th>Skill Level</th>
+                      <th>Position(s)</th>
+                      <th>Next Season</th>
+                      <th>Comments</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {evaluations.map(ev => (
+                      <tr key={ev.id}>
+                        <td>{ev.player_name}</td>
+                        <td className="rating" style={{ color: ratingColor(ev.ball_skills, clubSettings) }}>{ev.ball_skills}</td>
+                        <td className="rating" style={{ color: ratingColor(ev.attacking, clubSettings) }}>{ev.attacking}</td>
+                        <td className="rating" style={{ color: ratingColor(ev.defense, clubSettings) }}>{ev.defense}</td>
+                        <td className="rating" style={{ color: ratingColor(ev.perception, clubSettings) }}>{ev.perception}</td>
+                        <td className="rating" style={{ color: ratingColor(ev.footwork, clubSettings) }}>{ev.footwork}</td>
+                        <td>{fmtPct(ev.training_attendance, ev.training_total)}</td>
+                        <td>{fmtPct(ev.game_attendance, ev.game_total)}</td>
+                        <td>{ev.skill_level}</td>
+                        <td>{ev.main_positions}</td>
+                        <td>{ev.next_season}</td>
+                        <td className="comments">{ev.comments}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportsScreen({ clubId, clubName, onBack }) {
   const [tab, setTab] = useState("season");
   const [seasons, setSeasons] = useState([]);
   const [players, setPlayers] = useState([]);
+  const [clubSettings, setClubSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     (async () => {
-      const [seasonsRes, playersRes] = await Promise.all([
+      const [seasonsRes, playersRes, settingsRes] = await Promise.all([
         db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
         db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+        db.from("club_settings").select("*").eq("club_id", clubId).maybeSingle(),
       ]);
       if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
       if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
+      // club_settings may not have a row yet (never saved) — that's fine,
+      // ReportHeader/pctColor both fall back cleanly to generic colours.
+      if (!settingsRes.error) setClubSettings(settingsRes.data || null);
       setSeasons(seasonsRes.data || []);
       setPlayers(playersRes.data || []);
       setLoading(false);
@@ -3506,6 +3695,7 @@ function ReportsScreen({ clubId, clubName, onBack }) {
         <button className={"quarter-tab" + (tab === "season" ? " active" : "")} onClick={() => setTab("season")}>Season Report</button>
         <button className={"quarter-tab" + (tab === "game" ? " active" : "")} onClick={() => setTab("game")}>Game Report</button>
         <button className={"quarter-tab" + (tab === "player" ? " active" : "")} onClick={() => setTab("player")}>Player Report</button>
+        <button className={"quarter-tab" + (tab === "evaluations" ? " active" : "")} onClick={() => setTab("evaluations")}>Evaluations</button>
       </div>
 
       {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
@@ -3515,11 +3705,13 @@ function ReportsScreen({ clubId, clubName, onBack }) {
       ) : seasons.length === 0 ? (
         <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
       ) : tab === "season" ? (
-        <SeasonReportView clubId={clubId} clubName={clubName} seasons={seasons} />
+        <SeasonReportView clubId={clubId} clubName={clubName} seasons={seasons} clubSettings={clubSettings} />
       ) : tab === "game" ? (
-        <GameReportView clubId={clubId} clubName={clubName} seasons={seasons} />
+        <GameReportView clubId={clubId} clubName={clubName} seasons={seasons} clubSettings={clubSettings} />
+      ) : tab === "player" ? (
+        <PlayerReportView clubId={clubId} clubName={clubName} seasons={seasons} players={players} clubSettings={clubSettings} />
       ) : (
-        <PlayerReportView clubId={clubId} clubName={clubName} seasons={seasons} players={players} />
+        <EvaluationReportView clubId={clubId} clubName={clubName} seasons={seasons} clubSettings={clubSettings} />
       )}
     </div>
   );
