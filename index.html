@@ -3499,6 +3499,52 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
   // Training + history views only; Reports/Stats/Registration/Evaluations
   // and Club Settings/Manage Coaches stay hidden. Reports & Admin sections
   // remain "Coming soon" placeholders pending later phases.
+
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [games, setGames] = useState([]);
+  const [loadingHome, setLoadingHome] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: seasonsErr } = await db
+        .from("seasons")
+        .select("*")
+        .eq("club_id", profile.clubId)
+        .order("name", { ascending: true });
+      if (seasonsErr) { setLoadingHome(false); return; }
+      setSeasons(data || []);
+      if (data && data.length > 0) setSeasonName(data[0].name);
+      else setLoadingHome(false);
+    })();
+  }, [profile.clubId]);
+
+  useEffect(() => {
+    if (!seasonName) return;
+    (async () => {
+      setLoadingHome(true);
+      const { data, error: gamesErr } = await db
+        .from("games")
+        .select("*")
+        .eq("club_id", profile.clubId)
+        .eq("season_name", seasonName);
+      if (!gamesErr) setGames(data || []);
+      setLoadingHome(false);
+    })();
+  }, [profile.clubId, seasonName]);
+
+  const activeSeason = seasons.find(s => s.name === seasonName);
+  const completedGames = games.filter(g => g.is_completed && !g.is_bye);
+  const wins = completedGames.filter(g => g.our_score > g.opponent_score).length;
+  const losses = completedGames.filter(g => g.our_score < g.opponent_score).length;
+  const draws = completedGames.filter(g => g.our_score === g.opponent_score).length;
+  const nextGame = games
+    .filter(g => !g.is_completed && !g.is_bye)
+    .sort((a, b) => (a.round || 0) - (b.round || 0))[0];
+  const nextGameUnavailable = nextGame
+    ? Object.entries(nextGame.player_availability || {}).filter(([, v]) => v === false).map(([name]) => name).sort()
+    : [];
+
   return (
     <div>
       <div className="topbar">
@@ -3511,6 +3557,51 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
         </div>
         <button className="logout" onClick={onLogout}>Log Out</button>
       </div>
+
+      {!loadingHome && seasons.length > 0 && (
+        <div style={{ display: "flex", gap: 12, maxWidth: 900, margin: "16px auto 0 auto", padding: "0 20px", flexWrap: "wrap" }}>
+          <div className="game-card" style={{ flex: 1, minWidth: 220 }}>
+            <div className="meta-line" style={{ marginBottom: 4 }}>ACTIVE SEASON</div>
+            {seasons.length > 1 ? (
+              <select className="season-select" style={{ width: "100%" }} value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+                {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+              </select>
+            ) : (
+              <div className="round-line">{seasonName}</div>
+            )}
+            {activeSeason && activeSeason.team_name && <div className="meta-line" style={{ marginTop: 4 }}>{activeSeason.team_name}</div>}
+          </div>
+          <div className="game-card" style={{ flex: 1, minWidth: 220 }}>
+            <div className="meta-line" style={{ marginBottom: 4 }}>SEASON RECORD</div>
+            {completedGames.length === 0 ? (
+              <div className="round-line">No games yet</div>
+            ) : (
+              <div style={{ display: "flex", gap: 16 }}>
+                <span><strong>{wins}</strong> W</span>
+                <span><strong>{losses}</strong> L</span>
+                <span><strong>{draws}</strong> D</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!loadingHome && nextGame && (
+        <div className="game-card" style={{ maxWidth: 900, margin: "12px auto 0 auto" }}>
+          <div>
+            <div className="meta-line" style={{ marginBottom: 2 }}>NEXT GAME</div>
+            <div className="round-line">Round {nextGame.round} vs {nextGame.opponent}</div>
+            <div className="meta-line">
+              {nextGame.game_date}
+              {nextGame.game_time ? " · " + nextGame.game_time : ""}
+              {nextGame.court ? " · Court " + nextGame.court : ""}
+            </div>
+            {nextGameUnavailable.length > 0 && (
+              <div className="unavailable-line">Unavailable: {nextGameUnavailable.join(", ")}</div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="section-label">Game Day</div>
       <div className="nav-grid">
