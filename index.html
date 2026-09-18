@@ -686,6 +686,59 @@
   .report-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .report-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 
+  /* Position colour badges — used by the Game Report positions-by-quarter
+     grid and the Player Report position summary/quarter table. */
+  .pos-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  /* Progress bars for Player Report court-time / training-attendance —
+     same idea as the app's percentage bars. */
+  .report-bar-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+  .report-bar-row .value { font-weight: 700; }
+  .report-bar-track { width: 100%; height: 7px; border-radius: 4px; background: var(--border); overflow: hidden; margin-bottom: 3px; }
+  .report-bar-fill { height: 100%; border-radius: 4px; }
+
+  /* Scoring stat grid (Player Report) — a 2x2/4-up grid of small stat
+     tiles, distinct from .report-stat-strip which is used for the
+     header-level KPIs. */
+  .report-stat-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 4px 0; }
+  .report-stat-grid > div { flex: 1 1 140px; border: 1px solid var(--border); border-radius: 4px; padding: 9px 12px; }
+  .report-stat-grid label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 3px; }
+  .report-stat-grid .value { font-size: 15px; font-weight: 700; }
+
+  /* Position summary pills (Player Report). */
+  .report-pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px 0; }
+  .report-pill { border-radius: 20px; padding: 4px 11px; font-size: 12px; font-weight: 700; }
+
+  /* Coach notes 3-panel (Player Report), mirroring the app's Performance
+     Overview / Strengths / Focus Areas layout. */
+  .report-notes-grid { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 4px 0; }
+  .report-notes-panel { flex: 1 1 200px; }
+  .report-notes-panel h4 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--report-accent); margin: 0 0 5px 0; }
+  .report-notes-panel p { margin: 0; font-size: 12.5px; white-space: pre-wrap; }
+
+  /* Player-of-the-match cards with photo, used by both Game Report and
+     Player Report. */
+  .potm-card { display: flex; gap: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; }
+  .potm-card-photo { width: 56px; height: 56px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+  .potm-card-name { font-weight: 700; margin-bottom: 2px; }
+  .potm-card-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .potm-card-quote { font-size: 12.5px; white-space: pre-wrap; }
+
+  /* Comments section under the Evaluations table (moved out of the table
+     itself — see EvaluationReportView for why). */
+  .report-comment-block { margin-bottom: 10px; }
+  .report-comment-block .name { font-weight: 700; margin-bottom: 2px; }
+  .report-comment-block p { margin: 0; font-size: 12.5px; white-space: pre-wrap; }
+  .report-skill-defs { font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+  .report-skill-defs div { margin-bottom: 4px; }
+  .report-skill-defs strong { color: var(--text); }
+
   @page { size: A4; margin: 14mm; }
   @media print {
     .report-doc { box-shadow: none; border-radius: 0; padding: 0; max-width: none; margin: 0; }
@@ -1440,6 +1493,18 @@ const POSITION_LABELS = {
   GS: "Goal Shooter", GA: "Goal Attack", WA: "Wing Attack", C: "Centre",
   WD: "Wing Defence", GD: "Goal Defence", GK: "Goal Keeper",
 };
+// Colour key for position badges used in the Reports screen (positions-by-
+// quarter grid, position summary pills). The app's own PDF exporters show
+// positions as plain text with no colour coding to match, so this palette
+// is Claude's own choice for on-screen/print legibility — easy to retune.
+const POSITION_COLORS = {
+  GS: "#1E8F5B", GA: "#2F6FED", WA: "#C9971B", C: "#D6488B",
+  WD: "#E07A2E", GD: "#6B3FA0", GK: "#1E8F8F", OFF: "#9AA0A6",
+};
+function PositionBadge({ code }) {
+  const color = POSITION_COLORS[code] || POSITION_COLORS.OFF;
+  return <span className="pos-badge" style={{ background: color + "1F", color: color }}>{code || "—"}</span>;
+}
 // Same 2-hour staleness window as the Android app's game lock guard (see
 // project notes) — a lock older than this is treated as abandoned.
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
@@ -3250,15 +3315,15 @@ function pctColor(pct, clubSettings) {
   return "var(--danger)";
 }
 
-// Rating colour scale for the Evaluations report — the app's exporter
-// draws ratings as "bold coloured numbers" but the exact colour cutoffs
-// weren't in the confirmed schema (there's no column for them), so this
-// is a reasonable low/mid/high split, easy to retune once compared
-// side-by-side with a real app-exported evaluation PDF.
+// Rating colour scale for the Evaluations report. Fixed Sept 2026 after
+// comparing against a real app-exported evaluation PDF: the app's scale
+// runs 1 = Exceptional ... 5 = Needs Improvement, i.e. LOWER is better —
+// the opposite of what this originally assumed (which coloured every
+// rating backwards). Green for 1-2, the club colour for 3, red for 4-5.
 function ratingColor(value, clubSettings) {
   const n = Number(value);
-  if (n >= 4) return "var(--success)";
-  if (n <= 2) return "var(--danger)";
+  if (n <= 2) return "var(--success)";
+  if (n >= 4) return "var(--danger)";
   return (clubSettings && clubSettings.primary_color) || "var(--accent)";
 }
 
@@ -3486,12 +3551,38 @@ function GameReportView({ clubId, clubName, seasons, clubSettings }) {
             clubSettings={clubSettings}
             clubName={clubName}
             reportTitle="Game Report"
-            meta={seasonName + " · Round " + game.round + " vs " + game.opponent + (game.game_date ? " · " + game.game_date : "")}
+            meta={seasonName + " · Round " + game.round + " vs " + game.opponent + (game.game_date ? " · " + game.game_date : "")
+              + " · " + (game.our_score > game.opponent_score ? "WIN" : game.our_score < game.opponent_score ? "LOSS" : "DRAW")}
           />
 
           <div className="report-stat-strip">
-            <div><label>Final Score</label><span className="value">{game.our_score} - {game.opponent_score}</span></div>
+            <div><label>Our Score</label><span className="value">{game.our_score}</span></div>
+            <div><label>Their Score</label><span className="value">{game.opponent_score}</span></div>
+            <div><label>Turnovers</label><span className="value">{QUARTERS.reduce((sum, q) => sum + (Number((game.turnovers_by_quarter || {})[q]) || 0), 0)}</span></div>
+            <div><label>Player of Match</label><span className="value">{(game.players_of_match || []).length}</span></div>
           </div>
+
+          <div className="report-section-title">Goals by Player</div>
+          {(() => {
+            const totals = {};
+            QUARTERS.forEach(q => {
+              Object.entries((game.goals_by_quarter && game.goals_by_quarter[q]) || {}).forEach(([n, v]) => {
+                totals[n] = (totals[n] || 0) + (Number(v) || 0);
+              });
+            });
+            const rows = Object.entries(totals).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+            return rows.length === 0 ? (
+              <div className="report-empty">No goals recorded.</div>
+            ) : (
+              <table className="report-table">
+                <tbody>
+                  {rows.map(([name, goals]) => (
+                    <tr key={name}><td>{name}</td><td className="num">{goals}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
 
           <div className="report-section-title">By Quarter</div>
           <table className="report-table">
@@ -3517,16 +3608,62 @@ function GameReportView({ clubId, clubName, seasons, clubSettings }) {
             </tbody>
           </table>
 
+          <div className="report-section-title">Quarter Results</div>
+          <div className="report-pill-row">
+            {QUARTERS.map(q => {
+              const qGoals = (game.goals_by_quarter && game.goals_by_quarter[q]) || {};
+              const ourQ = Object.values(qGoals).reduce((sum, v) => sum + (Number(v) || 0), 0);
+              const oppQ = Number((game.opponent_goals_by_quarter || {})[q]) || 0;
+              const result = ourQ > oppQ ? "WIN" : ourQ < oppQ ? "LOSS" : "DRAW";
+              const color = result === "WIN" ? "var(--success)" : result === "LOSS" ? "var(--danger)" : "var(--muted)";
+              return (
+                <span key={q} className="report-pill" style={{ background: color + "1F", color: color }}>
+                  Q{q} {result}
+                </span>
+              );
+            })}
+          </div>
+
+          {(game.players_snapshot || []).length > 0 && (
+            <React.Fragment>
+              <div className="report-section-title">Positions by Quarter</div>
+              <table className="report-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    {QUARTERS.map(q => <th key={q}>Q{q}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(game.players_snapshot || []).map(p => (
+                    <tr key={p.name}>
+                      <td>{p.name}{p.wasFillIn ? <span className="muted-hint"> (fill-in)</span> : null}</td>
+                      {QUARTERS.map(q => {
+                        const code = ((game.positions_by_quarter || {})[q] || {})[p.name];
+                        return <td key={q}>{code ? <PositionBadge code={code} /> : "—"}</td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </React.Fragment>
+          )}
+
           {(game.players_of_match || []).length > 0 && (
             <React.Fragment>
               <div className="report-section-title">Player of the Match</div>
               {(game.players_of_match || []).map(name => (
-                <div key={name} style={{ padding: "8px 0" }}>
-                  <strong>{name}</strong>
-                  {(game.potm_comments || {})[name] ? " — " + game.potm_comments[name] : ""}
+                <div key={name} className="potm-card">
                   {potmPhotoUrls[name] && (
-                    <img src={potmPhotoUrls[name]} alt={name + " photo"} className="potm-photo-preview" />
+                    <img src={potmPhotoUrls[name]} alt={name + " photo"} className="potm-card-photo" />
                   )}
+                  <div>
+                    <div className="potm-card-name">{name}</div>
+                    <div className="potm-card-meta">Round {game.round} vs {game.opponent}</div>
+                    {(game.potm_comments || {})[name] && (
+                      <div className="potm-card-quote">&ldquo;{game.potm_comments[name]}&rdquo;</div>
+                    )}
+                  </div>
                 </div>
               ))}
             </React.Fragment>
@@ -3544,24 +3681,54 @@ function PlayerReportView({ clubId, clubName, seasons, players, clubSettings }) 
   const [playerName, setPlayerName] = useState(players.length > 0 ? players[0].name : "");
   const [games, setGames] = useState([]);
   const [sessions, setSessions] = useState([]);
+  const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [potmPhotoUrls, setPotmPhotoUrls] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg("");
-    const [gamesRes, sessionsRes] = await Promise.all([
+    const [gamesRes, sessionsRes, notesRes] = await Promise.all([
       db.from("games").select("*").eq("club_id", clubId).eq("season_name", seasonName).eq("is_completed", true),
       db.from("training_sessions").select("*").eq("club_id", clubId).eq("season", seasonName),
+      db.from("player_notes").select("*").eq("club_id", clubId).eq("player_name", playerName),
     ]);
     if (gamesRes.error) { setErrorMsg(gamesRes.error.message); setLoading(false); return; }
     if (sessionsRes.error) { setErrorMsg(sessionsRes.error.message); setLoading(false); return; }
+    if (notesRes.error) { setErrorMsg(notesRes.error.message); setLoading(false); return; }
     setGames(gamesRes.data || []);
     setSessions(sessionsRes.data || []);
+    // player_notes.season_name can be a compound "SeasonA, SeasonB" string
+    // just like player_evaluations — see evaluationCoversSeason — so this
+    // must never be filtered with a plain .eq() either.
+    setNote((notesRes.data || []).find(n => evaluationCoversSeason(n.season_name, seasonName)) || null);
     setLoading(false);
-  }, [clubId, seasonName]);
+  }, [clubId, seasonName, playerName]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Resolve any POTM photo(s) for this player across whichever games they
+  // were named Player of the Match in this season — a different photo can
+  // be stored per game. Kept above the players.length guard below so hook
+  // order stays stable regardless of roster size.
+  useEffect(() => {
+    let cancelled = false;
+    setPotmPhotoUrls({});
+    const targets = games
+      .filter(g => (g.players_of_match || []).includes(playerName) && g.potm_photos && g.potm_photos[playerName])
+      .map(g => ({ gameId: g.id, path: g.potm_photos[playerName] }));
+    if (targets.length === 0) return;
+    (async () => {
+      const urls = {};
+      await Promise.all(targets.map(async ({ gameId, path }) => {
+        const { data: signed } = await db.storage.from("potm-photos").createSignedUrl(path, 3600);
+        if (signed && signed.signedUrl) urls[gameId] = signed.signedUrl;
+      }));
+      if (!cancelled) setPotmPhotoUrls(urls);
+    })();
+    return () => { cancelled = true; };
+  }, [games, playerName]);
 
   if (players.length === 0) {
     return <div className="empty-note">No players on the club roster yet.</div>;
@@ -3580,14 +3747,60 @@ function PlayerReportView({ clubId, clubName, seasons, players, clubSettings }) 
     const wasPotm = (g.players_of_match || []).includes(playerName);
     return { game: g, goals, byQuarter, wasAvailable, wasPotm };
   });
-  const gamesPlayedCount = gamesGoals.filter(x => x.wasAvailable).length;
+  // "Games Played" counts every game this player appears on the roster
+  // for (same basis as the court-time/quarters figures below), not just
+  // the ones where an explicit availability flag is true — see the note
+  // sent alongside this report about a games-played count that still
+  // doesn't match the app's PDF for at least one player, pending Allan
+  // confirming how the app itself defines this figure.
+  const gamesPlayedCount = playerGames.length;
   const totalGoals = gamesGoals.reduce((sum, x) => sum + x.goals, 0);
-  const potmCount = gamesGoals.filter(x => x.wasPotm).length;
+  const potmGames = gamesGoals.filter(x => x.wasPotm);
+  const potmCount = potmGames.length;
   const bestGame = gamesGoals.reduce((best, x) => (!best || x.goals > best.goals) ? x : best, null);
+  const goalsPerGame = gamesPlayedCount > 0 ? (totalGoals / gamesPlayedCount) : 0;
 
   const activeSessions = sessions.filter(s => !s.is_cancelled);
   const attendedCount = activeSessions.filter(s => (s.attendance || {})[playerName] === true).length;
   const trainingPct = activeSessions.length > 0 ? Math.round((attendedCount / activeSessions.length) * 100) : null;
+
+  // Court-time / position breakdown, straight off positions_by_quarter.
+  // Every quarter this player appears in a game's positions_by_quarter
+  // object counts as "available"; a code other than "OFF" counts as
+  // on-court. Mirrors the app's Player Report court-time % and position
+  // summary.
+  const positionTotals = {};
+  COURT_CODES.forEach(code => { positionTotals[code] = 0; });
+  let onCourtQuarters = 0;
+  let availableQuarters = 0;
+  const q1Counts = {};
+  playerGames.forEach(g => {
+    const pbq = g.positions_by_quarter || {};
+    QUARTERS.forEach(q => {
+      const qPositions = pbq[q] || {};
+      if (!(playerName in qPositions)) return;
+      availableQuarters++;
+      const code = qPositions[playerName];
+      if (code && COURT_CODES.indexOf(code) !== -1) {
+        onCourtQuarters++;
+        positionTotals[code]++;
+        if (q === "1") q1Counts[code] = (q1Counts[code] || 0) + 1;
+      }
+    });
+  });
+  const offQuarters = availableQuarters - onCourtQuarters;
+  const courtTimePct = availableQuarters > 0 ? Math.round((onCourtQuarters / availableQuarters) * 100) : null;
+  const positionSummary = onCourtQuarters > 0
+    ? Object.entries(positionTotals)
+        .filter(([, count]) => count > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([code, count]) => [code, Math.round((count / onCourtQuarters) * 100)])
+    : [];
+  const startingPositionEntry = Object.entries(q1Counts).sort((a, b) => b[1] - a[1])[0] || null;
+  const gamesAvailable = availableQuarters / 4;
+  const startingPositionPct = startingPositionEntry && gamesAvailable > 0
+    ? Math.round((startingPositionEntry[1] / gamesAvailable) * 100)
+    : null;
 
   return (
     <div>
@@ -3611,19 +3824,136 @@ function PlayerReportView({ clubId, clubName, seasons, players, clubSettings }) 
 
           <div className="report-stat-strip">
             <div><label>Games Played</label><span className="value">{gamesPlayedCount}</span></div>
+            <div><label>Quarters on Court</label><span className="value">{onCourtQuarters}</span></div>
             <div><label>Goals</label><span className="value">{totalGoals}</span></div>
             <div><label>Player of the Match</label><span className="value">{potmCount}&times;</span></div>
-            <div>
-              <label>Training Attendance</label>
-              <span className="value" style={{ color: pctColor(trainingPct, clubSettings) }}>
-                {trainingPct === null ? "—" : trainingPct + "%"}
-              </span>
-            </div>
           </div>
           {bestGame && bestGame.goals > 0 && (
             <div className="muted-hint" style={{ margin: "8px 0 4px 0" }}>
               Best game: {bestGame.goals} goals vs {bestGame.game.opponent} (Round {bestGame.game.round})
             </div>
+          )}
+
+          <div className="report-section-title">Performance</div>
+          <div className="report-bar-row">
+            <span>Court time <span className="muted-hint">({onCourtQuarters} of {availableQuarters} quarters · {Math.round(gamesAvailable)} games available)</span></span>
+            <span className="value" style={{ color: pctColor(courtTimePct, clubSettings) }}>{courtTimePct === null ? "—" : courtTimePct + "%"}</span>
+          </div>
+          <div className="report-bar-track">
+            <div className="report-bar-fill" style={{ width: (courtTimePct || 0) + "%", background: pctColor(courtTimePct, clubSettings) }}></div>
+          </div>
+
+          <div className="report-bar-row" style={{ marginTop: 12 }}>
+            <span>Training attendance <span className="muted-hint">({attendedCount} of {activeSessions.length} sessions)</span></span>
+            <span className="value" style={{ color: pctColor(trainingPct, clubSettings) }}>{trainingPct === null ? "—" : trainingPct + "%"}</span>
+          </div>
+          <div className="report-bar-track">
+            <div className="report-bar-fill" style={{ width: (trainingPct || 0) + "%", background: pctColor(trainingPct, clubSettings) }}></div>
+          </div>
+
+          <div className="report-stat-grid">
+            <div><label>Total Goals</label><span className="value">{totalGoals}</span></div>
+            <div><label>Goals per Game</label><span className="value">{goalsPerGame.toFixed(1)}</span></div>
+            <div><label>Player of the Match</label><span className="value">{potmCount}&times;</span></div>
+            <div>
+              <label>Starting Position</label>
+              <span className="value">{startingPositionEntry ? startingPositionEntry[0] + " · " + startingPositionPct + "%" : "—"}</span>
+            </div>
+          </div>
+
+          {positionSummary.length > 0 && (
+            <React.Fragment>
+              <div className="muted-hint" style={{ margin: "10px 0 4px 0" }}>Position summary</div>
+              <div className="report-pill-row">
+                {positionSummary.map(([code, pct]) => {
+                  const color = POSITION_COLORS[code] || POSITION_COLORS.OFF;
+                  return <span key={code} className="report-pill" style={{ background: color + "1F", color: color }}>{code} · {pct}%</span>;
+                })}
+              </div>
+            </React.Fragment>
+          )}
+
+          {onCourtQuarters + offQuarters > 0 && (
+            <React.Fragment>
+              <div className="report-section-title">Quarter by Quarter</div>
+              <table className="report-table">
+                <thead><tr><th>Position</th><th className="num">Q1</th><th className="num">Q2</th><th className="num">Q3</th><th className="num">Q4</th><th className="num">Tot</th><th className="num">%</th></tr></thead>
+                <tbody>
+                  {(() => {
+                    const rows = [];
+                    COURT_CODES.forEach(code => {
+                      let total = 0;
+                      const perQ = QUARTERS.map(q => {
+                        let c = 0;
+                        playerGames.forEach(g => { if (((g.positions_by_quarter || {})[q] || {})[playerName] === code) c++; });
+                        total += c;
+                        return c;
+                      });
+                      rows.push(
+                        <tr key={code}>
+                          <td><PositionBadge code={code} /> {POSITION_LABELS[code]}</td>
+                          {perQ.map((c, i) => <td key={i} className="num">{c}</td>)}
+                          <td className="num">{total}</td>
+                          <td className="num">{onCourtQuarters > 0 ? Math.round((total / onCourtQuarters) * 100) + "%" : "0%"}</td>
+                        </tr>
+                      );
+                    });
+                    const offPerQ = QUARTERS.map((q) => {
+                      let c = 0;
+                      playerGames.forEach(g => {
+                        const qPositions = (g.positions_by_quarter || {})[q] || {};
+                        if (playerName in qPositions && (!qPositions[playerName] || COURT_CODES.indexOf(qPositions[playerName]) === -1)) c++;
+                      });
+                      return c;
+                    });
+                    rows.push(
+                      <tr key="OFF">
+                        <td className="muted-hint">Off court</td>
+                        {offPerQ.map((c, i) => <td key={i} className="num muted-hint">{c}</td>)}
+                        <td className="num muted-hint">{offQuarters}</td>
+                        <td className="num muted-hint">—</td>
+                      </tr>
+                    );
+                    return rows;
+                  })()}
+                </tbody>
+              </table>
+            </React.Fragment>
+          )}
+
+          <div className="report-section-title">Coach Notes</div>
+          <div className="report-notes-grid">
+            <div className="report-notes-panel">
+              <h4>Performance Overview</h4>
+              <p>{(note && note.performance_overview) || <span className="muted-hint">No notes recorded.</span>}</p>
+            </div>
+            <div className="report-notes-panel">
+              <h4>Strengths</h4>
+              <p>{(note && note.strengths) || <span className="muted-hint">No notes recorded.</span>}</p>
+            </div>
+            <div className="report-notes-panel">
+              <h4>Focus Areas</h4>
+              <p>{(note && note.focus_areas) || <span className="muted-hint">No notes recorded.</span>}</p>
+            </div>
+          </div>
+
+          {potmGames.length > 0 && (
+            <React.Fragment>
+              <div className="report-section-title">Player of the Match</div>
+              {potmGames.slice().sort((a, b) => a.game.round - b.game.round).map(({ game }) => (
+                <div key={game.id} className="potm-card">
+                  {potmPhotoUrls[game.id] && (
+                    <img src={potmPhotoUrls[game.id]} alt={playerName + " photo"} className="potm-card-photo" />
+                  )}
+                  <div>
+                    <div className="potm-card-name">Round {game.round} vs {game.opponent}</div>
+                    {(game.potm_comments || {})[playerName] && (
+                      <div className="potm-card-quote">&ldquo;{game.potm_comments[playerName]}&rdquo;</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </React.Fragment>
           )}
 
           <div className="report-section-title">Game Log</div>
@@ -3690,6 +4020,25 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
     if (!total) return "—";
     return Math.round((attended / total) * 100) + "% (" + attended + "/" + total + ")";
   };
+  const fmtEvalDate = (d) => {
+    if (!d) return null;
+    const parsed = new Date(d);
+    return isNaN(parsed.getTime()) ? d : parsed.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  };
+
+  // Coach name and evaluation date live on each row, not on the season as
+  // a whole, but in practice a coach evaluates a whole age group in one
+  // sitting — so when every row agrees, show it once in the header like
+  // the app's exporter does; otherwise leave it off rather than guess
+  // which one belongs in a single header line.
+  const uniqueCoaches = Array.from(new Set(evaluations.map(e => e.coach_name).filter(Boolean)));
+  const uniqueDates = Array.from(new Set(evaluations.map(e => e.evaluation_date).filter(Boolean)));
+  const metaExtra = [];
+  if (uniqueCoaches.length === 1) metaExtra.push("Coach: " + uniqueCoaches[0]);
+  if (uniqueDates.length === 1) metaExtra.push("Evaluated " + fmtEvalDate(uniqueDates[0]));
+  const meta = seasonName + (metaExtra.length > 0 ? " · " + metaExtra.join(" · ") : "");
+
+  const evaluationsWithComments = evaluations.filter(ev => (ev.comments || "").trim().length > 0);
 
   return (
     <div>
@@ -3706,59 +4055,90 @@ function EvaluationReportView({ clubId, clubName, seasons, clubSettings }) {
         <div className="empty-note">Loading…</div>
       ) : (
         <ReportDoc clubSettings={clubSettings}>
-          <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Player Evaluations" meta={seasonName} />
+          <ReportLetterhead clubSettings={clubSettings} clubName={clubName} reportTitle="Player Evaluations" meta={meta} />
 
           {evaluations.length === 0 ? (
             <div className="report-empty">No evaluations recorded for this season yet — add some under "Player Evaluations".</div>
           ) : (
             <React.Fragment>
+              {/* Matches the app's actual rating scale — 1 = Exceptional,
+                  5 = Needs Improvement, i.e. LOWER is better — confirmed
+                  against a real app-exported evaluation PDF Sept 2026. */}
               <div className="report-legend">
-                <span><span className="dot" style={{ background: "var(--danger)" }}></span> 1-2 Needs work</span>
-                <span><span className="dot" style={{ background: (clubSettings && clubSettings.primary_color) || "var(--accent)" }}></span> 3 Developing</span>
-                <span><span className="dot" style={{ background: "var(--success)" }}></span> 4-5 Strong</span>
+                <span><span className="dot" style={{ background: "var(--success)" }}></span> 1 Exceptional</span>
+                <span><span className="dot" style={{ background: "var(--success)" }}></span> 2 Very Good</span>
+                <span><span className="dot" style={{ background: (clubSettings && clubSettings.primary_color) || "var(--accent)" }}></span> 3 Average</span>
+                <span><span className="dot" style={{ background: "var(--danger)" }}></span> 4 Poor</span>
+                <span><span className="dot" style={{ background: "var(--danger)" }}></span> 5 Needs Improvement</span>
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="report-table">
-                  <thead>
-                    <tr>
-                      <th>Player</th>
-                      <th>Ball Skills</th>
-                      <th>Attacking</th>
-                      <th>Defense</th>
-                      <th>Perception</th>
-                      <th>Footwork</th>
-                      <th>Training %</th>
-                      <th>Games %</th>
-                      <th>Skill Level</th>
-                      <th>Position(s)</th>
-                      <th>Next Season</th>
-                      <th>Comments</th>
+              <table className="report-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Ball Skills</th>
+                    <th>Attacking</th>
+                    <th>Defense</th>
+                    <th>Perception</th>
+                    <th>Footwork</th>
+                    <th>Training %</th>
+                    <th>Games %</th>
+                    <th>Skill Level</th>
+                    <th>Position(s)</th>
+                    <th>Next Season</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {evaluations.map(ev => (
+                    <tr key={ev.id}>
+                      <td>
+                        {ev.player_name}
+                        {ev.season_name !== seasonName && (
+                          <div className="muted-hint">also covers: {ev.season_name.split(",").map(s => s.trim()).filter(s => s !== seasonName).join(", ")}</div>
+                        )}
+                        {(uniqueCoaches.length > 1 || uniqueDates.length > 1) && (
+                          <div className="muted-hint">
+                            {ev.coach_name}{ev.evaluation_date ? " · " + fmtEvalDate(ev.evaluation_date) : ""}
+                          </div>
+                        )}
+                      </td>
+                      <td className="rating" style={{ color: ratingColor(ev.ball_skills, clubSettings) }}>{ev.ball_skills}</td>
+                      <td className="rating" style={{ color: ratingColor(ev.attacking, clubSettings) }}>{ev.attacking}</td>
+                      <td className="rating" style={{ color: ratingColor(ev.defense, clubSettings) }}>{ev.defense}</td>
+                      <td className="rating" style={{ color: ratingColor(ev.perception, clubSettings) }}>{ev.perception}</td>
+                      <td className="rating" style={{ color: ratingColor(ev.footwork, clubSettings) }}>{ev.footwork}</td>
+                      <td>{fmtPct(ev.training_attendance, ev.training_total)}</td>
+                      <td>{fmtPct(ev.game_attendance, ev.game_total)}</td>
+                      <td>{ev.skill_level}</td>
+                      <td>{ev.main_positions}</td>
+                      <td>{ev.next_season}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {evaluations.map(ev => (
-                      <tr key={ev.id}>
-                        <td>
-                          {ev.player_name}
-                          {ev.season_name !== seasonName && (
-                            <div className="muted-hint">also covers: {ev.season_name.split(",").map(s => s.trim()).filter(s => s !== seasonName).join(", ")}</div>
-                          )}
-                        </td>
-                        <td className="rating" style={{ color: ratingColor(ev.ball_skills, clubSettings) }}>{ev.ball_skills}</td>
-                        <td className="rating" style={{ color: ratingColor(ev.attacking, clubSettings) }}>{ev.attacking}</td>
-                        <td className="rating" style={{ color: ratingColor(ev.defense, clubSettings) }}>{ev.defense}</td>
-                        <td className="rating" style={{ color: ratingColor(ev.perception, clubSettings) }}>{ev.perception}</td>
-                        <td className="rating" style={{ color: ratingColor(ev.footwork, clubSettings) }}>{ev.footwork}</td>
-                        <td>{fmtPct(ev.training_attendance, ev.training_total)}</td>
-                        <td>{fmtPct(ev.game_attendance, ev.game_total)}</td>
-                        <td>{ev.skill_level}</td>
-                        <td>{ev.main_positions}</td>
-                        <td>{ev.next_season}</td>
-                        <td className="comments">{ev.comments}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Comments were previously a table column, but at 12 columns wide
+                  it silently ran off the printed page — the exact "cut off"
+                  problem Allan flagged. Shown here in full instead, where they
+                  can wrap and always print. */}
+              {evaluationsWithComments.length > 0 && (
+                <React.Fragment>
+                  <div className="report-section-title">Comments</div>
+                  {evaluationsWithComments.map(ev => (
+                    <div key={ev.id} className="report-comment-block">
+                      <div className="name">{ev.player_name}</div>
+                      <p>{ev.comments}</p>
+                    </div>
+                  ))}
+                </React.Fragment>
+              )}
+
+              <div className="report-section-title">Skill Definitions</div>
+              <div className="report-skill-defs">
+                <div><strong>Ball Skills:</strong> Catching effectively; passing accurately; using a variety of passes in appropriate situations; using more advanced skills such as baulking; one hand control and passing on either side.</div>
+                <div><strong>Attacking:</strong> Moving into or creating space with basic leads; dodges and changes of direction; using a variety/combination of attacking moves; awareness of space; shooting action and accuracy; advanced skills such as double dodge, half and full roll, front cut.</div>
+                <div><strong>Defense:</strong> Recovering to 3 feet; getting hands over the ball; shadowing effectively; effective footwork; body control and positioning; defending from front, side and back; defending the shot; anticipating and positioning for intercepts; communicating, switching with and covering teammates.</div>
+                <div><strong>Perception/Cognition:</strong> Awareness of space, players, ball and game situations; on-court decision-making; timing of movement and pass release; pass selection; reading the play; concentration; performance under game pressure.</div>
+                <div><strong>Footwork:</strong> Balanced landing and moving; demonstrating good body control; changing direction effectively and appropriately.</div>
               </div>
             </React.Fragment>
           )}
