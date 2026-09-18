@@ -2575,6 +2575,8 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
   const [addingSeason, setAddingSeason] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+  const [deletingSeasonId, setDeletingSeasonId] = useState(null);
+  const [deletingPlayerId, setDeletingPlayerId] = useState(null);
 
   const loadAll = useCallback(async () => {
     const [playersRes, seasonsRes] = await Promise.all([
@@ -2641,6 +2643,65 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
     await loadAll();
   }
 
+  // Deleting a season is only allowed once nothing references it any more —
+  // games/training/registrations are checked first rather than cascading,
+  // so a season's history can never be silently wiped by one click. If the
+  // season really does need to go, the linked games/sessions/registrations
+  // have to be removed first (or, for games, via Delete Game on Game
+  // History / Upcoming Games).
+  async function handleDeleteSeason(season) {
+    setErrorMsg(""); setInfoMsg("");
+    const [gamesRes, trainingRes, regRes] = await Promise.all([
+      db.from("games").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season_name", season.name),
+      db.from("training_sessions").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season", season.name),
+      db.from("registrations").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season_id", season.id),
+    ]);
+    const checkErr = gamesRes.error || trainingRes.error || regRes.error;
+    if (checkErr) { setErrorMsg(checkErr.message); return; }
+    const gamesCount = gamesRes.count || 0;
+    const trainingCount = trainingRes.count || 0;
+    const regCount = regRes.count || 0;
+    if (gamesCount > 0 || trainingCount > 0 || regCount > 0) {
+      const parts = [];
+      if (gamesCount > 0) parts.push(gamesCount + " game" + (gamesCount === 1 ? "" : "s"));
+      if (trainingCount > 0) parts.push(trainingCount + " training session" + (trainingCount === 1 ? "" : "s"));
+      if (regCount > 0) parts.push(regCount + " registration" + (regCount === 1 ? "" : "s"));
+      setErrorMsg("Can't delete \"" + season.name + "\" — it still has " + parts.join(", ") + ". Remove those first (Delete Game on Game History, Delete Session on Training History) if this season really should go.");
+      return;
+    }
+    if (!window.confirm("Delete season \"" + season.name + "\"? This can't be undone.")) return;
+    setDeletingSeasonId(season.id);
+    const { error: delErr } = await db.from("seasons").delete().eq("id", season.id).eq("club_id", clubId);
+    setDeletingSeasonId(null);
+    if (delErr) { setErrorMsg(delErr.message); return; }
+    setInfoMsg("Deleted season \"" + season.name + "\".");
+    await loadAll();
+  }
+
+  // Removing a player deletes their registrations, notes and evaluations
+  // (nothing left dangling), but deliberately does NOT touch past games —
+  // each completed game already stores its own players_snapshot/goals
+  // independently, so historical results and stats stay exactly as they
+  // were. This mirrors how the app already treats games as a permanent
+  // record rather than a live join to the players table.
+  async function handleDeletePlayer(player) {
+    setErrorMsg(""); setInfoMsg("");
+    if (!window.confirm("Remove " + player.name + " from the roster? Their registrations, notes and evaluations will be deleted. Past game results/goals already recorded for them are kept as-is.")) return;
+    setDeletingPlayerId(player.id);
+    const [regDel, notesDel, evalDel] = await Promise.all([
+      db.from("registrations").delete().eq("club_id", clubId).eq("player_name", player.name),
+      db.from("player_notes").delete().eq("club_id", clubId).eq("player_name", player.name),
+      db.from("player_evaluations").delete().eq("club_id", clubId).eq("player_name", player.name),
+    ]);
+    const cleanupErr = regDel.error || notesDel.error || evalDel.error;
+    if (cleanupErr) { setDeletingPlayerId(null); setErrorMsg(cleanupErr.message); return; }
+    const { error: delErr } = await db.from("players").delete().eq("id", player.id).eq("club_id", clubId);
+    setDeletingPlayerId(null);
+    if (delErr) { setErrorMsg(delErr.message); return; }
+    setInfoMsg("Removed " + player.name + " from the roster. Past game history is unaffected.");
+    await loadAll();
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -2671,6 +2732,25 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
           </button>
         </div>
 
+        {!loading && players.length > 0 && (
+          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20, marginBottom: 28 }}>
+            <div className="muted-hint" style={{ marginBottom: 6 }}>Current players ({players.length}):</div>
+            {players.map(p => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                <span>{p.name}</span>
+                <button
+                  className="secondary"
+                  style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
+                  disabled={deletingPlayerId === p.id}
+                  onClick={() => handleDeletePlayer(p)}
+                >
+                  {deletingPlayerId === p.id ? "Removing…" : "Remove"}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20 }}>
           <div className="session-field">
             <label>Add a Season / Team</label>
@@ -2688,8 +2768,16 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
             <div style={{ marginTop: 18 }}>
               <div className="muted-hint" style={{ marginBottom: 6 }}>Existing seasons:</div>
               {seasons.map(s => (
-                <div key={s.id} style={{ fontSize: 13.5, padding: "4px 0" }}>
-                  {s.name}{s.team_name ? " — " + s.team_name : ""}
+                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "4px 0" }}>
+                  <span>{s.name}{s.team_name ? " — " + s.team_name : ""}</span>
+                  <button
+                    className="secondary"
+                    style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
+                    disabled={deletingSeasonId === s.id}
+                    onClick={() => handleDeleteSeason(s)}
+                  >
+                    {deletingSeasonId === s.id ? "Deleting…" : "Delete"}
+                  </button>
                 </div>
               ))}
             </div>
@@ -3016,9 +3104,12 @@ function SeasonReportView({ clubId, clubName, seasons }) {
   useEffect(() => { load(); }, [load]);
 
   const playedGames = games.filter(g => !g.is_bye);
+  const byes = games.length - playedGames.length;
   const wins = playedGames.filter(g => g.our_score > g.opponent_score).length;
   const losses = playedGames.filter(g => g.our_score < g.opponent_score).length;
   const draws = playedGames.filter(g => g.our_score === g.opponent_score).length;
+  const goalsFor = playedGames.reduce((sum, g) => sum + (Number(g.our_score) || 0), 0);
+  const goalsAgainst = playedGames.reduce((sum, g) => sum + (Number(g.opponent_score) || 0), 0);
   const activeSessions = sessions.filter(s => !s.is_cancelled);
   const avgAttendance = (() => {
     const rates = activeSessions.map(s => {
@@ -3029,6 +3120,22 @@ function SeasonReportView({ clubId, clubName, seasons }) {
     if (rates.length === 0) return null;
     return Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 100);
   })();
+
+  const goalsByPlayer = {};
+  const potmCountByPlayer = {};
+  playedGames.forEach(g => {
+    QUARTERS.forEach(q => {
+      const qGoals = (g.goals_by_quarter && g.goals_by_quarter[q]) || {};
+      Object.entries(qGoals).forEach(([name, val]) => {
+        goalsByPlayer[name] = (goalsByPlayer[name] || 0) + (Number(val) || 0);
+      });
+    });
+    (g.players_of_match || []).forEach(name => {
+      potmCountByPlayer[name] = (potmCountByPlayer[name] || 0) + 1;
+    });
+  });
+  const topScorers = Object.entries(goalsByPlayer).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const potmLeaders = Object.entries(potmCountByPlayer).sort((a, b) => b[1] - a[1]);
 
   return (
     <div>
@@ -3052,7 +3159,13 @@ function SeasonReportView({ clubId, clubName, seasons }) {
             <div className="quick-stat"><label>Wins</label>{wins}</div>
             <div className="quick-stat"><label>Losses</label>{losses}</div>
             <div className="quick-stat"><label>Draws</label>{draws}</div>
+            {byes > 0 && <div className="quick-stat"><label>Byes</label>{byes}</div>}
             <div className="quick-stat"><label>Avg Training Attendance</label>{avgAttendance === null ? "—" : avgAttendance + "%"}</div>
+          </div>
+          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
+            <div className="quick-stat"><label>Goals For</label>{goalsFor}</div>
+            <div className="quick-stat"><label>Goals Against</label>{goalsAgainst}</div>
+            <div className="quick-stat"><label>Margin</label>{goalsFor - goalsAgainst > 0 ? "+" : ""}{goalsFor - goalsAgainst}</div>
           </div>
 
           <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Results</h3>
@@ -3061,10 +3174,28 @@ function SeasonReportView({ clubId, clubName, seasons }) {
           ) : (
             playedGames.slice().sort((a, b) => a.round - b.round).map(g => (
               <div key={g.id} className="availability-row">
-                <span>Round {g.round} vs {g.opponent}</span>
+                <span>Round {g.round} vs {g.opponent}{g.game_date ? " · " + g.game_date : ""}</span>
                 <span>{g.our_score} - {g.opponent_score}</span>
               </div>
             ))
+          )}
+
+          {topScorers.length > 0 && (
+            <React.Fragment>
+              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Top Scorers</h3>
+              {topScorers.map(([name, goals]) => (
+                <div key={name} className="availability-row"><span>{name}</span><span>{goals}</span></div>
+              ))}
+            </React.Fragment>
+          )}
+
+          {potmLeaders.length > 0 && (
+            <React.Fragment>
+              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Player of the Match</h3>
+              {potmLeaders.map(([name, count]) => (
+                <div key={name} className="availability-row"><span>{name}</span><span>{count}&times;</span></div>
+              ))}
+            </React.Fragment>
           )}
 
           <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Training</h3>
@@ -3083,6 +3214,7 @@ function GameReportView({ clubId, clubName, seasons }) {
   const [gameId, setGameId] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [potmPhotoUrls, setPotmPhotoUrls] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -3105,6 +3237,25 @@ function GameReportView({ clubId, clubName, seasons }) {
   useEffect(() => { load(); }, [load]);
 
   const game = games.find(g => g.id === gameId);
+
+  // Resolve any stored POTM photo paths to short-lived signed URLs whenever
+  // the selected game changes — same convention GameDayScreen uses.
+  useEffect(() => {
+    let cancelled = false;
+    setPotmPhotoUrls({});
+    if (!game || !game.potm_photos) return;
+    const entries = Object.entries(game.potm_photos);
+    if (entries.length === 0) return;
+    (async () => {
+      const urls = {};
+      await Promise.all(entries.map(async ([name, path]) => {
+        const { data: signed } = await db.storage.from("potm-photos").createSignedUrl(path, 3600);
+        if (signed && signed.signedUrl) urls[name] = signed.signedUrl;
+      }));
+      if (!cancelled) setPotmPhotoUrls(urls);
+    })();
+    return () => { cancelled = true; };
+  }, [game && game.id]);
 
   return (
     <div>
@@ -3165,9 +3316,12 @@ function GameReportView({ clubId, clubName, seasons }) {
             <React.Fragment>
               <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Player of the Match</h3>
               {(game.players_of_match || []).map(name => (
-                <div key={name} style={{ fontSize: 13.5, padding: "4px 0" }}>
+                <div key={name} style={{ fontSize: 13.5, padding: "8px 0" }}>
                   <strong>{name}</strong>
                   {(game.potm_comments || {})[name] ? " — " + game.potm_comments[name] : ""}
+                  {potmPhotoUrls[name] && (
+                    <img src={potmPhotoUrls[name]} alt={name + " photo"} className="potm-photo-preview" />
+                  )}
                 </div>
               ))}
             </React.Fragment>
@@ -3209,12 +3363,20 @@ function PlayerReportView({ clubId, clubName, seasons, players }) {
   const playerGames = games.filter(g => !g.is_bye && (g.players_snapshot || []).some(p => p.name === playerName));
   const gamesGoals = playerGames.map(g => {
     let goals = 0;
-    QUARTERS.forEach(q => { goals += Number(((g.goals_by_quarter && g.goals_by_quarter[q]) || {})[playerName]) || 0; });
+    const byQuarter = {};
+    QUARTERS.forEach(q => {
+      const qGoals = Number(((g.goals_by_quarter && g.goals_by_quarter[q]) || {})[playerName]) || 0;
+      byQuarter[q] = qGoals;
+      goals += qGoals;
+    });
     const wasAvailable = (g.player_availability || {})[playerName] !== false;
-    return { game: g, goals, wasAvailable };
+    const wasPotm = (g.players_of_match || []).includes(playerName);
+    return { game: g, goals, byQuarter, wasAvailable, wasPotm };
   });
   const gamesPlayedCount = gamesGoals.filter(x => x.wasAvailable).length;
   const totalGoals = gamesGoals.reduce((sum, x) => sum + x.goals, 0);
+  const potmCount = gamesGoals.filter(x => x.wasPotm).length;
+  const bestGame = gamesGoals.reduce((best, x) => (!best || x.goals > best.goals) ? x : best, null);
 
   const activeSessions = sessions.filter(s => !s.is_cancelled);
   const attendedCount = activeSessions.filter(s => (s.attendance || {})[playerName] === true).length;
@@ -3244,17 +3406,30 @@ function PlayerReportView({ clubId, clubName, seasons, players }) {
           <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
             <div className="quick-stat"><label>Games Played</label>{gamesPlayedCount}</div>
             <div className="quick-stat"><label>Goals</label>{totalGoals}</div>
+            <div className="quick-stat"><label>Player of the Match</label>{potmCount}&times;</div>
             <div className="quick-stat"><label>Training Attendance</label>{trainingPct === null ? "—" : trainingPct + "%"}</div>
           </div>
+          {bestGame && bestGame.goals > 0 && (
+            <div className="muted-hint" style={{ marginBottom: 16 }}>
+              Best game: {bestGame.goals} goals vs {bestGame.game.opponent} (Round {bestGame.game.round})
+            </div>
+          )}
 
           <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Log</h3>
           {gamesGoals.length === 0 ? (
             <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No games recorded for this player this season.</div>
           ) : (
-            gamesGoals.slice().sort((a, b) => a.game.round - b.game.round).map(({ game, goals, wasAvailable }) => (
-              <div key={game.id} className="availability-row">
-                <span>Round {game.round} vs {game.opponent}{!wasAvailable ? " (unavailable)" : ""}</span>
-                <span>{goals > 0 ? goals + " goals" : "—"}</span>
+            gamesGoals.slice().sort((a, b) => a.game.round - b.game.round).map(({ game, goals, byQuarter, wasAvailable, wasPotm }) => (
+              <div key={game.id} className="availability-row" style={{ display: "block", padding: "10px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                  <span>Round {game.round} vs {game.opponent}{!wasAvailable ? " (unavailable)" : ""}{wasPotm ? " ⭐" : ""}</span>
+                  <span>{goals > 0 ? goals + " goals" : "—"}</span>
+                </div>
+                {goals > 0 && (
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+                    By quarter: {QUARTERS.map(q => "Q" + q + ": " + (byQuarter[q] || 0)).join("  ·  ")}
+                  </div>
+                )}
               </div>
             ))
           )}
