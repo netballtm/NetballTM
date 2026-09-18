@@ -601,6 +601,20 @@
 
   .session-actions { max-width: 480px; margin: 24px auto 40px auto; padding: 0 20px; display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
   .session-summary-row { max-width: 900px; margin: 16px auto 0 auto; padding: 0 20px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* Base muted-hint rule so it also works standalone (outside a .session-field
+     or .quarter-field parent) — used by the Phase 4/5 admin/report screens. */
+  .muted-hint { color: var(--muted); font-size: 11.5px; }
+
+  /* Reports (Phase 5) print handling: hide navigational chrome and any
+     element explicitly marked .no-print, so "Print / Save as PDF" produces a
+     clean page of just the report content. */
+  @media print {
+    .topbar, .page-header .back-link, .page-header-actions, .quarter-tabs, .season-select-row, .no-print {
+      display: none !important;
+    }
+    body { background: #fff; }
+  }
 </style>
 </head>
 <body>
@@ -2477,6 +2491,830 @@ function TrainingSessionScreen({ sessionId, clubId, role, backLabel, onBack }) {
   );
 }
 
+function ManageCoachesScreen({ clubId, myCoachId, onBack }) {
+  const [coaches, setCoaches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+  const [savingId, setSavingId] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: fetchErr } = await db
+        .from("coaches")
+        .select("*")
+        .eq("club_id", clubId)
+        .order("display_name", { ascending: true });
+      if (fetchErr) setErrorMsg(fetchErr.message);
+      else setCoaches(data || []);
+      setLoading(false);
+    })();
+  }, [clubId]);
+
+  async function changeRole(coachId, newRole) {
+    setSavingId(coachId);
+    setErrorMsg(""); setInfoMsg("");
+    const { error: updateErr } = await db.from("coaches").update({ role: newRole }).eq("id", coachId);
+    setSavingId(null);
+    if (updateErr) { setErrorMsg(updateErr.message); return; }
+    setCoaches(prev => prev.map(c => c.id === coachId ? { ...c, role: newRole } : c));
+    setInfoMsg("Role updated.");
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Manage Coaches</h1>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : coaches.length === 0 ? (
+        <div className="empty-note">No coaches found for this club.</div>
+      ) : (
+        <div className="game-list">
+          {coaches.map(c => {
+            const isMe = c.id === myCoachId;
+            return (
+              <div className="game-card" key={c.id}>
+                <div>
+                  <div className="round-line">{c.display_name || c.email}{isMe ? " (you)" : ""}</div>
+                  <div className="meta-line">{c.email}</div>
+                </div>
+                <select
+                  className="season-select"
+                  value={c.role || "coach"}
+                  disabled={isMe || savingId === c.id}
+                  onChange={e => changeRole(c.id, e.target.value)}
+                >
+                  <option value="admin">Admin</option>
+                  <option value="coach">Coach</option>
+                  <option value="team_manager">Team Manager</option>
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoadTeamsPlayersScreen({ clubId, onBack }) {
+  const [players, setPlayers] = useState([]);
+  const [seasons, setSeasons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [pasteText, setPasteText] = useState("");
+  const [addingPlayers, setAddingPlayers] = useState(false);
+  const [seasonName, setSeasonName] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [addingSeason, setAddingSeason] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+
+  const loadAll = useCallback(async () => {
+    const [playersRes, seasonsRes] = await Promise.all([
+      db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+    ]);
+    if (playersRes.error) setErrorMsg(playersRes.error.message);
+    else setPlayers(playersRes.data || []);
+    if (seasonsRes.error) setErrorMsg(seasonsRes.error.message);
+    else setSeasons(seasonsRes.data || []);
+    setLoading(false);
+  }, [clubId]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  async function handleAddPlayers() {
+    const names = pasteText.split("\n").map(n => n.trim()).filter(n => n.length > 0);
+    if (names.length === 0) return;
+    setAddingPlayers(true);
+    setErrorMsg(""); setInfoMsg("");
+
+    const existingLower = new Set(players.map(p => p.name.toLowerCase()));
+    const seenThisBatch = new Set();
+    const toInsert = [];
+    const skipped = [];
+    names.forEach(name => {
+      const lower = name.toLowerCase();
+      if (existingLower.has(lower) || seenThisBatch.has(lower)) { skipped.push(name); return; }
+      seenThisBatch.add(lower);
+      toInsert.push({ name, club_id: clubId, is_default_fill_in: false });
+    });
+
+    if (toInsert.length === 0) {
+      setInfoMsg("Nothing to add — every name pasted is already a player.");
+      setAddingPlayers(false);
+      return;
+    }
+
+    const { error: insertErr } = await db.from("players").insert(toInsert);
+    setAddingPlayers(false);
+    if (insertErr) { setErrorMsg(insertErr.message); return; }
+
+    setInfoMsg(
+      "Added " + toInsert.length + " player" + (toInsert.length === 1 ? "" : "s") + "." +
+      (skipped.length ? " Skipped " + skipped.length + " already on the roster: " + skipped.join(", ") + "." : "")
+    );
+    setPasteText("");
+    await loadAll();
+  }
+
+  async function handleAddSeason() {
+    if (!seasonName.trim()) return;
+    setAddingSeason(true);
+    setErrorMsg(""); setInfoMsg("");
+    const { error: insertErr } = await db.from("seasons").insert({
+      name: seasonName.trim(),
+      team_name: teamName.trim() || null,
+      club_id: clubId,
+    });
+    setAddingSeason(false);
+    if (insertErr) { setErrorMsg(insertErr.message); return; }
+    setInfoMsg("Added season \"" + seasonName.trim() + "\".");
+    setSeasonName(""); setTeamName("");
+    await loadAll();
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Load Teams &amp; Players</h1>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      <div className="session-form" style={{ maxWidth: 560 }}>
+        <div className="session-field">
+          <label>Add Players</label>
+          <textarea
+            rows={8}
+            placeholder={"Paste one player name per line, e.g.\nAddison Daly\nAlly Turner\nEllie Hatzis"}
+            value={pasteText}
+            onChange={e => setPasteText(e.target.value)}
+          />
+          <div className="muted-hint">
+            Names already on the club's player list are skipped automatically — safe to paste the same list twice.
+            {!loading && " Currently " + players.length + " player" + (players.length === 1 ? "" : "s") + " on the roster."}
+          </div>
+        </div>
+        <div style={{ margin: "12px 0 28px 0" }}>
+          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingPlayers || !pasteText.trim()} onClick={handleAddPlayers}>
+            {addingPlayers ? "Adding…" : "Add Players"}
+          </button>
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20 }}>
+          <div className="session-field">
+            <label>Add a Season / Team</label>
+            <input type="text" placeholder="Season name, e.g. Winter 2027" value={seasonName} onChange={e => setSeasonName(e.target.value)} />
+          </div>
+          <div className="session-field">
+            <label>Team name (optional)</label>
+            <input type="text" placeholder="e.g. U15 Violets" value={teamName} onChange={e => setTeamName(e.target.value)} />
+          </div>
+          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingSeason || !seasonName.trim()} onClick={handleAddSeason}>
+            {addingSeason ? "Adding…" : "Add Season"}
+          </button>
+
+          {!loading && seasons.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div className="muted-hint" style={{ marginBottom: 6 }}>Existing seasons:</div>
+              {seasons.map(s => (
+                <div key={s.id} style={{ fontSize: 13.5, padding: "4px 0" }}>
+                  {s.name}{s.team_name ? " — " + s.team_name : ""}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RegistrationScreen({ clubId, onBack }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonId, setSeasonId] = useState("");
+  const [players, setPlayers] = useState([]);
+  const [registeredNames, setRegisteredNames] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [seasonsRes, playersRes] = await Promise.all([
+        db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      ]);
+      if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
+      if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
+      setSeasons(seasonsRes.data || []);
+      setPlayers(playersRes.data || []);
+      if (seasonsRes.data && seasonsRes.data.length > 0) setSeasonId(seasonsRes.data[0].id);
+      else setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadRegistrations = useCallback(async () => {
+    if (!seasonId) return;
+    setLoading(true);
+    setErrorMsg("");
+    const { data, error: regErr } = await db
+      .from("registrations")
+      .select("player_name")
+      .eq("club_id", clubId)
+      .eq("season_id", seasonId);
+    if (regErr) { setErrorMsg(regErr.message); setLoading(false); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.player_name] = true; });
+    setRegisteredNames(map);
+    setLoading(false);
+  }, [clubId, seasonId]);
+
+  useEffect(() => { loadRegistrations(); }, [loadRegistrations]);
+
+  async function toggle(name) {
+    if (saving) return;
+    const isCurrentlyRegistered = !!registeredNames[name];
+    setSaving(true);
+    setErrorMsg("");
+    if (isCurrentlyRegistered) {
+      const { error: delErr } = await db.from("registrations")
+        .delete()
+        .eq("club_id", clubId)
+        .eq("season_id", seasonId)
+        .eq("player_name", name);
+      setSaving(false);
+      if (delErr) { setErrorMsg(delErr.message); return; }
+      setRegisteredNames(prev => { const next = { ...prev }; delete next[name]; return next; });
+    } else {
+      // Deliberately does NOT write season_index — that legacy column is what
+      // caused the original registrations ambiguity (see project notes) and
+      // writing a guessed value into it here would just recreate the same
+      // problem for new rows. If this insert fails because season_index turns
+      // out to be a NOT NULL column with no default, the fix is a one-line
+      // `ALTER TABLE registrations ALTER COLUMN season_index DROP NOT NULL;`
+      // in the Supabase SQL Editor, not filling it in with a made-up value.
+      const { error: insErr } = await db.from("registrations").insert({
+        club_id: clubId,
+        season_id: seasonId,
+        player_name: name,
+      });
+      setSaving(false);
+      if (insErr) { setErrorMsg(insErr.message); return; }
+      setRegisteredNames(prev => ({ ...prev, [name]: true }));
+    }
+  }
+
+  const activeSeason = seasons.find(s => s.id === seasonId);
+  const registeredCount = Object.keys(registeredNames).length;
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Registration</h1>
+      </div>
+
+      {seasons.length > 1 && (
+        <div className="season-select-row">
+          <select className="season-select" value={seasonId} onChange={e => setSeasonId(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {!loading && activeSeason && (
+        <div className="session-summary-row">
+          <div className="quick-stat"><label>Registered</label>{registeredCount} / {players.length}</div>
+          {activeSeason.team_name && <div className="quick-stat"><label>Team</label>{activeSeason.team_name}</div>}
+        </div>
+      )}
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : seasons.length === 0 ? (
+        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
+      ) : players.length === 0 ? (
+        <div className="empty-note">No players on the club roster yet — add some under "Load Teams &amp; Players".</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 560 }}>
+          <RosterToggleList
+            players={players.map(p => p.name)}
+            selected={registeredNames}
+            onToggle={toggle}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatsScreen({ clubId, onBack }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [tab, setTab] = useState("games");
+  const [games, setGames] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: seasonsErr } = await db.from("seasons").select("*").eq("club_id", clubId);
+      if (seasonsErr) { setErrorMsg(seasonsErr.message); setLoading(false); return; }
+      setSeasons(data || []);
+      if (data && data.length > 0) setSeasonName(data[0].name);
+      else setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadStats = useCallback(async () => {
+    if (!seasonName) return;
+    setLoading(true);
+    setErrorMsg("");
+    const [gamesRes, playersRes, sessionsRes] = await Promise.all([
+      db.from("games").select("*").eq("club_id", clubId).eq("season_name", seasonName).eq("is_completed", true),
+      db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      db.from("training_sessions").select("*").eq("club_id", clubId).eq("season", seasonName),
+    ]);
+    const firstErr = gamesRes.error || playersRes.error || sessionsRes.error;
+    if (firstErr) { setErrorMsg(firstErr.message); setLoading(false); return; }
+    setGames(gamesRes.data || []);
+    setPlayers(playersRes.data || []);
+    setSessions(sessionsRes.data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
+
+  const playedGames = games.filter(g => !g.is_bye);
+  const wins = playedGames.filter(g => g.our_score > g.opponent_score).length;
+  const losses = playedGames.filter(g => g.our_score < g.opponent_score).length;
+  const draws = playedGames.filter(g => g.our_score === g.opponent_score).length;
+  const byes = games.length - playedGames.length;
+
+  const goalsByPlayer = {};
+  playedGames.forEach(g => {
+    QUARTERS.forEach(q => {
+      const qGoals = (g.goals_by_quarter && g.goals_by_quarter[q]) || {};
+      Object.entries(qGoals).forEach(([name, val]) => {
+        goalsByPlayer[name] = (goalsByPlayer[name] || 0) + (Number(val) || 0);
+      });
+    });
+  });
+
+  const gamesPlayedByPlayer = {};
+  playedGames.forEach(g => {
+    (g.players_snapshot || []).forEach(p => {
+      if ((g.player_availability || {})[p.name] === false) return;
+      gamesPlayedByPlayer[p.name] = (gamesPlayedByPlayer[p.name] || 0) + 1;
+    });
+  });
+
+  const activeSessions = sessions.filter(s => !s.is_cancelled);
+  const trainingByPlayer = {};
+  activeSessions.forEach(s => {
+    Object.entries(s.attendance || {}).forEach(([name, present]) => {
+      if (!trainingByPlayer[name]) trainingByPlayer[name] = { attended: 0, total: 0 };
+      trainingByPlayer[name].total += 1;
+      if (present === true) trainingByPlayer[name].attended += 1;
+    });
+  });
+
+  const topScorers = Object.entries(goalsByPlayer).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Stats</h1>
+      </div>
+
+      {seasons.length > 1 && (
+        <div className="season-select-row">
+          <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div className="quarter-tabs">
+        <button className={"quarter-tab" + (tab === "games" ? " active" : "")} onClick={() => setTab("games")}>Games</button>
+        <button className={"quarter-tab" + (tab === "players" ? " active" : "")} onClick={() => setTab("players")}>Players</button>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : tab === "games" ? (
+        games.length === 0 ? (
+          <div className="empty-note">No completed games yet.</div>
+        ) : (
+          <React.Fragment>
+            <div className="session-summary-row">
+              <div className="quick-stat"><label>Wins</label>{wins}</div>
+              <div className="quick-stat"><label>Losses</label>{losses}</div>
+              <div className="quick-stat"><label>Draws</label>{draws}</div>
+              {byes > 0 && <div className="quick-stat"><label>Byes</label>{byes}</div>}
+            </div>
+            <div className="game-list">
+              {games.slice().sort((a, b) => a.round - b.round).map(g => {
+                let resultLabel = "BYE", resultClass = "bye";
+                if (!g.is_bye) {
+                  if (g.our_score > g.opponent_score) { resultLabel = "W"; resultClass = "win"; }
+                  else if (g.our_score < g.opponent_score) { resultLabel = "L"; resultClass = "loss"; }
+                  else { resultLabel = "D"; resultClass = "draw"; }
+                }
+                return (
+                  <div className="game-card" key={g.id}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div className={"result-badge " + resultClass}>{resultLabel}</div>
+                      <div>
+                        <div className="round-line">Round {g.round}{g.is_bye ? " — BYE" : " vs " + g.opponent}</div>
+                        {!g.is_bye && (
+                          <div className="meta-line">{g.our_score} - {g.opponent_score}{g.game_date ? " · " + g.game_date : ""}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </React.Fragment>
+        )
+      ) : players.length === 0 ? (
+        <div className="empty-note">No players on the club roster yet.</div>
+      ) : (
+        <React.Fragment>
+          {topScorers.length > 0 && (
+            <div className="potm-section" style={{ maxWidth: 900 }}>
+              <h3>Top Scorers</h3>
+              {topScorers.map(([name, goals]) => (
+                <div className="availability-row" key={name}><span>{name}</span><span>{goals}</span></div>
+              ))}
+            </div>
+          )}
+          <div className="game-list" style={{ maxWidth: 900 }}>
+            {players.map(p => {
+              const gp = gamesPlayedByPlayer[p.name] || 0;
+              const goals = goalsByPlayer[p.name] || 0;
+              const t = trainingByPlayer[p.name] || { attended: 0, total: 0 };
+              const trainingPct = t.total > 0 ? Math.round((t.attended / t.total) * 100) : null;
+              return (
+                <div className="game-card" key={p.id}>
+                  <div className="round-line">{p.name}</div>
+                  <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+                    <span>Games: {gp}</span>
+                    <span>Goals: {goals}</span>
+                    <span>Training: {trainingPct === null ? "—" : trainingPct + "%"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function SeasonReportView({ clubId, clubName, seasons }) {
+  const [seasonName, setSeasonName] = useState(seasons[0].name);
+  const [games, setGames] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg("");
+    const [gamesRes, sessionsRes] = await Promise.all([
+      db.from("games").select("*").eq("club_id", clubId).eq("season_name", seasonName).eq("is_completed", true),
+      db.from("training_sessions").select("*").eq("club_id", clubId).eq("season", seasonName),
+    ]);
+    if (gamesRes.error) { setErrorMsg(gamesRes.error.message); setLoading(false); return; }
+    if (sessionsRes.error) { setErrorMsg(sessionsRes.error.message); setLoading(false); return; }
+    setGames(gamesRes.data || []);
+    setSessions(sessionsRes.data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const playedGames = games.filter(g => !g.is_bye);
+  const wins = playedGames.filter(g => g.our_score > g.opponent_score).length;
+  const losses = playedGames.filter(g => g.our_score < g.opponent_score).length;
+  const draws = playedGames.filter(g => g.our_score === g.opponent_score).length;
+  const activeSessions = sessions.filter(s => !s.is_cancelled);
+  const avgAttendance = (() => {
+    const rates = activeSessions.map(s => {
+      const entries = Object.entries(s.attendance || {});
+      if (entries.length === 0) return null;
+      return entries.filter(([, v]) => v === true).length / entries.length;
+    }).filter(r => r !== null);
+    if (rates.length === 0) return null;
+    return Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 100);
+  })();
+
+  return (
+    <div>
+      <div className="season-select-row" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+          {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+        </select>
+        <button className="secondary no-print" onClick={() => window.print()}>Print / Save as PDF</button>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 700 }}>
+          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Season Report</h2>
+          <div className="muted-hint" style={{ marginBottom: 16 }}>{seasonName}</div>
+
+          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
+            <div className="quick-stat"><label>Wins</label>{wins}</div>
+            <div className="quick-stat"><label>Losses</label>{losses}</div>
+            <div className="quick-stat"><label>Draws</label>{draws}</div>
+            <div className="quick-stat"><label>Avg Training Attendance</label>{avgAttendance === null ? "—" : avgAttendance + "%"}</div>
+          </div>
+
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Results</h3>
+          {playedGames.length === 0 ? (
+            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No completed games this season.</div>
+          ) : (
+            playedGames.slice().sort((a, b) => a.round - b.round).map(g => (
+              <div key={g.id} className="availability-row">
+                <span>Round {g.round} vs {g.opponent}</span>
+                <span>{g.our_score} - {g.opponent_score}</span>
+              </div>
+            ))
+          )}
+
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Training</h3>
+          <div style={{ fontSize: 13.5 }}>
+            {sessions.length} session{sessions.length === 1 ? "" : "s"} recorded, {sessions.length - activeSessions.length} cancelled.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GameReportView({ clubId, clubName, seasons }) {
+  const [seasonName, setSeasonName] = useState(seasons[0].name);
+  const [games, setGames] = useState([]);
+  const [gameId, setGameId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg("");
+    const { data, error: gamesErr } = await db
+      .from("games")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season_name", seasonName)
+      .eq("is_completed", true)
+      .eq("is_bye", false)
+      .order("round", { ascending: true });
+    if (gamesErr) { setErrorMsg(gamesErr.message); setLoading(false); return; }
+    const rows = data || [];
+    setGames(rows);
+    setGameId(rows.length > 0 ? rows[0].id : "");
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const game = games.find(g => g.id === gameId);
+
+  return (
+    <div>
+      <div className="season-select-row" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+          {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+        </select>
+        {games.length > 0 && (
+          <select className="season-select" value={gameId} onChange={e => setGameId(e.target.value)}>
+            {games.map(g => <option key={g.id} value={g.id}>Round {g.round} vs {g.opponent}</option>)}
+          </select>
+        )}
+        {game && <button className="secondary no-print" onClick={() => window.print()}>Print / Save as PDF</button>}
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : !game ? (
+        <div className="empty-note">No completed games for this season yet.</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 700 }}>
+          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Game Report</h2>
+          <div className="muted-hint" style={{ marginBottom: 16 }}>
+            {seasonName} · Round {game.round} vs {game.opponent}{game.game_date ? " · " + game.game_date : ""}
+          </div>
+
+          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
+            <div className="quick-stat"><label>Final Score</label>{game.our_score} - {game.opponent_score}</div>
+          </div>
+
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>By Quarter</h3>
+          {QUARTERS.map(q => {
+            const qGoals = (game.goals_by_quarter && game.goals_by_quarter[q]) || {};
+            const scorers = Object.entries(qGoals).filter(([, v]) => Number(v) > 0);
+            const ourQ = scorers.reduce((sum, [, v]) => sum + Number(v), 0);
+            const oppQ = (game.opponent_goals_by_quarter && game.opponent_goals_by_quarter[q]) || 0;
+            const turnoversQ = (game.turnovers_by_quarter && game.turnovers_by_quarter[q]) || 0;
+            const noteQ = (game.quarter_notes && game.quarter_notes[q]) || "";
+            return (
+              <div key={q} className="availability-row" style={{ display: "block", padding: "10px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                  <span>Quarter {q}</span>
+                  <span>{ourQ} - {oppQ}{turnoversQ ? " · Turnovers: " + turnoversQ : ""}</span>
+                </div>
+                {scorers.length > 0 && (
+                  <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>
+                    Goals: {scorers.map(([n, v]) => n + " (" + v + ")").join(", ")}
+                  </div>
+                )}
+                {noteQ && <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 3 }}>{noteQ}</div>}
+              </div>
+            );
+          })}
+
+          {(game.players_of_match || []).length > 0 && (
+            <React.Fragment>
+              <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)", marginTop: 20 }}>Player of the Match</h3>
+              {(game.players_of_match || []).map(name => (
+                <div key={name} style={{ fontSize: 13.5, padding: "4px 0" }}>
+                  <strong>{name}</strong>
+                  {(game.potm_comments || {})[name] ? " — " + game.potm_comments[name] : ""}
+                </div>
+              ))}
+            </React.Fragment>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlayerReportView({ clubId, clubName, seasons, players }) {
+  const [seasonName, setSeasonName] = useState(seasons[0].name);
+  const [playerName, setPlayerName] = useState(players.length > 0 ? players[0].name : "");
+  const [games, setGames] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg("");
+    const [gamesRes, sessionsRes] = await Promise.all([
+      db.from("games").select("*").eq("club_id", clubId).eq("season_name", seasonName).eq("is_completed", true),
+      db.from("training_sessions").select("*").eq("club_id", clubId).eq("season", seasonName),
+    ]);
+    if (gamesRes.error) { setErrorMsg(gamesRes.error.message); setLoading(false); return; }
+    if (sessionsRes.error) { setErrorMsg(sessionsRes.error.message); setLoading(false); return; }
+    setGames(gamesRes.data || []);
+    setSessions(sessionsRes.data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (players.length === 0) {
+    return <div className="empty-note">No players on the club roster yet.</div>;
+  }
+
+  const playerGames = games.filter(g => !g.is_bye && (g.players_snapshot || []).some(p => p.name === playerName));
+  const gamesGoals = playerGames.map(g => {
+    let goals = 0;
+    QUARTERS.forEach(q => { goals += Number(((g.goals_by_quarter && g.goals_by_quarter[q]) || {})[playerName]) || 0; });
+    const wasAvailable = (g.player_availability || {})[playerName] !== false;
+    return { game: g, goals, wasAvailable };
+  });
+  const gamesPlayedCount = gamesGoals.filter(x => x.wasAvailable).length;
+  const totalGoals = gamesGoals.reduce((sum, x) => sum + x.goals, 0);
+
+  const activeSessions = sessions.filter(s => !s.is_cancelled);
+  const attendedCount = activeSessions.filter(s => (s.attendance || {})[playerName] === true).length;
+  const trainingPct = activeSessions.length > 0 ? Math.round((attendedCount / activeSessions.length) * 100) : null;
+
+  return (
+    <div>
+      <div className="season-select-row" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+          {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+        </select>
+        <select className="season-select" value={playerName} onChange={e => setPlayerName(e.target.value)}>
+          {players.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+        </select>
+        <button className="secondary no-print" onClick={() => window.print()}>Print / Save as PDF</button>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 700 }}>
+          <h2 style={{ margin: "18px 0 4px 0" }}>{clubName} — Player Report</h2>
+          <div className="muted-hint" style={{ marginBottom: 16 }}>{playerName} · {seasonName}</div>
+
+          <div className="session-summary-row" style={{ margin: "0 0 20px 0", padding: 0 }}>
+            <div className="quick-stat"><label>Games Played</label>{gamesPlayedCount}</div>
+            <div className="quick-stat"><label>Goals</label>{totalGoals}</div>
+            <div className="quick-stat"><label>Training Attendance</label>{trainingPct === null ? "—" : trainingPct + "%"}</div>
+          </div>
+
+          <h3 style={{ fontSize: 13, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--muted)" }}>Game Log</h3>
+          {gamesGoals.length === 0 ? (
+            <div style={{ fontSize: 13.5, color: "var(--muted)" }}>No games recorded for this player this season.</div>
+          ) : (
+            gamesGoals.slice().sort((a, b) => a.game.round - b.game.round).map(({ game, goals, wasAvailable }) => (
+              <div key={game.id} className="availability-row">
+                <span>Round {game.round} vs {game.opponent}{!wasAvailable ? " (unavailable)" : ""}</span>
+                <span>{goals > 0 ? goals + " goals" : "—"}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportsScreen({ clubId, clubName, onBack }) {
+  const [tab, setTab] = useState("season");
+  const [seasons, setSeasons] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [seasonsRes, playersRes] = await Promise.all([
+        db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      ]);
+      if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
+      if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
+      setSeasons(seasonsRes.data || []);
+      setPlayers(playersRes.data || []);
+      setLoading(false);
+    })();
+  }, [clubId]);
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Reports</h1>
+      </div>
+
+      <div className="quarter-tabs">
+        <button className={"quarter-tab" + (tab === "season" ? " active" : "")} onClick={() => setTab("season")}>Season Report</button>
+        <button className={"quarter-tab" + (tab === "game" ? " active" : "")} onClick={() => setTab("game")}>Game Report</button>
+        <button className={"quarter-tab" + (tab === "player" ? " active" : "")} onClick={() => setTab("player")}>Player Report</button>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : seasons.length === 0 ? (
+        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
+      ) : tab === "season" ? (
+        <SeasonReportView clubId={clubId} clubName={clubName} seasons={seasons} />
+      ) : tab === "game" ? (
+        <GameReportView clubId={clubId} clubName={clubName} seasons={seasons} />
+      ) : (
+        <PlayerReportView clubId={clubId} clubName={clubName} seasons={seasons} players={players} />
+      )}
+    </div>
+  );
+}
+
 function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
   const isAdmin = profile.role === "admin";
   const isTeamManager = profile.role === "team_manager";
@@ -2516,9 +3354,9 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
         <React.Fragment>
           <div className="section-label">Reports &amp; Admin</div>
           <div className="nav-grid">
-            <NavTile label="Registration" enabled={false} />
-            <NavTile label="Stats" enabled={false} />
-            <NavTile label="Reports" enabled={false} />
+            <NavTile label="Registration" enabled={true} onClick={() => onNavigate("registration")} />
+            <NavTile label="Stats" enabled={true} onClick={() => onNavigate("stats")} />
+            <NavTile label="Reports" enabled={true} onClick={() => onNavigate("reports")} />
             <NavTile label="Player Evaluations" enabled={false} />
           </div>
         </React.Fragment>
@@ -2529,8 +3367,8 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
           <div className="section-label">Club Admin</div>
           <div className="nav-grid">
             <NavTile label="Club Settings" enabled={false} />
-            <NavTile label="Manage Coaches" enabled={false} />
-            <NavTile label="Load Teams &amp; Players" enabled={false} />
+            <NavTile label="Manage Coaches" enabled={true} onClick={() => onNavigate("manage-coaches")} />
+            <NavTile label="Load Teams &amp; Players" enabled={true} onClick={() => onNavigate("load-teams-players")} />
           </div>
         </React.Fragment>
       )}
@@ -2844,6 +3682,36 @@ function App() {
         onBack={() => goTo(trainingReturnTo)}
       />
     );
+  }
+  if (screen === "registration" && profile) {
+    if (profile.role === "team_manager") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <RegistrationScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
+  }
+  if (screen === "stats" && profile) {
+    if (profile.role === "team_manager") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <StatsScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
+  }
+  if (screen === "reports" && profile) {
+    if (profile.role === "team_manager") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <ReportsScreen clubId={profile.clubId} clubName={profile.clubName} onBack={() => goTo("home")} />;
+  }
+  if (screen === "manage-coaches" && profile) {
+    if (profile.role !== "admin") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <ManageCoachesScreen clubId={profile.clubId} myCoachId={profile.id} onBack={() => goTo("home")} />;
+  }
+  if (screen === "load-teams-players" && profile) {
+    if (profile.role !== "admin") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <LoadTeamsPlayersScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
   }
   return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
 }
