@@ -1400,6 +1400,41 @@ function compressPhotoFile(file) {
   });
 }
 
+// Club Settings stores the logo as a raw base64 string directly in the
+// club_settings.logo_base64 column (confirmed via information_schema —
+// there is no dedicated logo storage bucket, unlike POTM photos), and the
+// Android app decodes that same column straight to a local file. Reuses
+// compressPhotoFile's resize step (smaller max dimension, since this is a
+// logo not a photo) then strips the "data:image/jpeg;base64," prefix that
+// FileReader.readAsDataURL adds, leaving the same raw base64 shape Android
+// writes/reads.
+function compressLogoFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.onload = () => {
+      img.onerror = () => reject(new Error("Could not read that image."));
+      img.onload = () => {
+        const maxDim = 512;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+        resolve(dataUrl.split(",")[1]);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function PlayerPickerModal({ slotCode, currentPlayer, benchPlayers, onPick, onClear, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -3490,6 +3525,461 @@ function ReportsScreen({ clubId, clubName, onBack }) {
   );
 }
 
+// Club Settings — column names confirmed via information_schema.columns
+// (Sept 2026, see project notes) rather than guessed: club_name,
+// primary_color, button_color, home_background_color,
+// light_background_color, reminder_minutes_before, logo_base64, plus a
+// club_id column that (unusually for this project) allows NULL — it's
+// still always set to the caller's real club_id here on every save.
+// club_settings INSERT/UPDATE is admin-only at the RLS level (see
+// Permission levels / roles section), so this screen is admin-gated the
+// same way Manage Coaches / Load Teams & Players are.
+function ClubSettingsScreen({ clubId, onBack, onSaved }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+
+  const [clubName, setClubName] = useState("");
+  const [primaryColor, setPrimaryColor] = useState("#5B1E8F");
+  const [buttonColor, setButtonColor] = useState("#5B1E8F");
+  const [homeBackgroundColor, setHomeBackgroundColor] = useState("#1A0533");
+  const [lightBackgroundColor, setLightBackgroundColor] = useState("#F7F1FA");
+  const [reminderMinutes, setReminderMinutes] = useState(0);
+  const [logoBase64, setLogoBase64] = useState("");
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data, error: loadErr } = await db.from("club_settings").select("*").eq("club_id", clubId).maybeSingle();
+      if (loadErr) { setErrorMsg(loadErr.message); setLoading(false); return; }
+      if (data) {
+        setClubName(data.club_name || "");
+        setPrimaryColor(data.primary_color || "#5B1E8F");
+        setButtonColor(data.button_color || "#5B1E8F");
+        setHomeBackgroundColor(data.home_background_color || "#1A0533");
+        setLightBackgroundColor(data.light_background_color || "#F7F1FA");
+        setReminderMinutes(data.reminder_minutes_before || 0);
+        setLogoBase64(data.logo_base64 || "");
+      }
+      setLoading(false);
+    })();
+  }, [clubId]);
+
+  async function handleLogoSelected(file) {
+    if (!file) return;
+    setUploadingLogo(true);
+    setErrorMsg("");
+    try {
+      const base64 = await compressLogoFileToBase64(file);
+      setLogoBase64(base64);
+    } catch (e) {
+      setErrorMsg((e && e.message) || String(e));
+    }
+    setUploadingLogo(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setErrorMsg(""); setInfoMsg("");
+    const { error: saveErr } = await db.from("club_settings").upsert({
+      club_id: clubId,
+      club_name: clubName.trim(),
+      primary_color: primaryColor,
+      button_color: buttonColor,
+      home_background_color: homeBackgroundColor,
+      light_background_color: lightBackgroundColor,
+      reminder_minutes_before: Number(reminderMinutes) || 0,
+      logo_base64: logoBase64,
+    }, { onConflict: "club_id" });
+    setSaving(false);
+    if (saveErr) { setErrorMsg(saveErr.message); return; }
+    setInfoMsg("Settings saved.");
+    if (onSaved) onSaved({ clubName: clubName.trim() });
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Club Settings</h1>
+      </div>
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : (
+        <div className="session-form" style={{ maxWidth: 560 }}>
+          <div className="session-field">
+            <label>Club Name</label>
+            <input type="text" value={clubName} onChange={e => setClubName(e.target.value)} />
+          </div>
+
+          <div className="session-field">
+            <label>Logo</label>
+            {logoBase64 && (
+              <img src={"data:image/jpeg;base64," + logoBase64} alt="Club logo" style={{ maxWidth: 140, borderRadius: 8, display: "block", marginBottom: 8 }} />
+            )}
+            <input type="file" accept="image/*" disabled={uploadingLogo} onChange={e => handleLogoSelected(e.target.files && e.target.files[0])} />
+            {uploadingLogo && <div className="muted-hint">Processing…</div>}
+          </div>
+
+          <div className="session-field">
+            <label>Primary Colour</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} style={{ width: 44, height: 32, padding: 0, border: "none" }} />
+              <input type="text" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} style={{ maxWidth: 120 }} />
+            </div>
+          </div>
+          <div className="session-field">
+            <label>Button Colour</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={buttonColor} onChange={e => setButtonColor(e.target.value)} style={{ width: 44, height: 32, padding: 0, border: "none" }} />
+              <input type="text" value={buttonColor} onChange={e => setButtonColor(e.target.value)} style={{ maxWidth: 120 }} />
+            </div>
+          </div>
+          <div className="session-field">
+            <label>Home Background Colour</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={homeBackgroundColor} onChange={e => setHomeBackgroundColor(e.target.value)} style={{ width: 44, height: 32, padding: 0, border: "none" }} />
+              <input type="text" value={homeBackgroundColor} onChange={e => setHomeBackgroundColor(e.target.value)} style={{ maxWidth: 120 }} />
+            </div>
+          </div>
+          <div className="session-field">
+            <label>Light Background Colour</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="color" value={lightBackgroundColor} onChange={e => setLightBackgroundColor(e.target.value)} style={{ width: 44, height: 32, padding: 0, border: "none" }} />
+              <input type="text" value={lightBackgroundColor} onChange={e => setLightBackgroundColor(e.target.value)} style={{ maxWidth: 120 }} />
+            </div>
+          </div>
+
+          <div className="session-field">
+            <label>Reminder (minutes before a game/session)</label>
+            <input type="number" min="0" value={reminderMinutes} onChange={e => setReminderMinutes(e.target.value)} style={{ maxWidth: 120 }} />
+          </div>
+
+          <button className="primary" style={{ marginTop: 10, width: "auto" }} disabled={saving} onClick={handleSave}>
+            {saving ? "Saving…" : "Save Settings"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Player Evaluations — column names confirmed via information_schema.columns
+// (Sept 2026). Unique on (club_id, season_name, player_name), so picking a
+// season + player either loads that existing evaluation or starts a blank
+// one; Save always upserts on that same composite key. training_attendance/
+// training_total/game_attendance/game_total default to auto-computed
+// counts from training_sessions/games (same convention as Stats/Player
+// Report) but can be overridden by hand before saving, matching how the
+// Android app treats these as editable totals rather than pure read-only
+// derived fields.
+function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
+  const [seasons, setSeasons] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [seasonName, setSeasonName] = useState("");
+  const [playerName, setPlayerName] = useState("");
+  const [evaluations, setEvaluations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [infoMsg, setInfoMsg] = useState("");
+
+  const blankForm = () => ({
+    evaluationDate: new Date().toISOString().slice(0, 10),
+    ageGroup: "",
+    ballSkills: 3, attacking: 3, defense: 3, perception: 3, footwork: 3,
+    skillLevel: "Medium",
+    mainPositions: [],
+    nextSeason: "Stay",
+    comments: "",
+    trainingAttendance: 0, trainingTotal: 0, gameAttendance: 0, gameTotal: 0,
+  });
+  const [form, setForm] = useState(blankForm());
+
+  useEffect(() => {
+    (async () => {
+      const [seasonsRes, playersRes] = await Promise.all([
+        db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      ]);
+      if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
+      if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
+      setSeasons(seasonsRes.data || []);
+      setPlayers(playersRes.data || []);
+      if (seasonsRes.data && seasonsRes.data.length > 0) setSeasonName(seasonsRes.data[0].name);
+      if (playersRes.data && playersRes.data.length > 0) setPlayerName(playersRes.data[0].name);
+      if (!seasonsRes.data || seasonsRes.data.length === 0) setLoading(false);
+    })();
+  }, [clubId]);
+
+  const loadForSeason = useCallback(async () => {
+    if (!seasonName) return;
+    setLoading(true);
+    setErrorMsg("");
+    const { data, error: evalErr } = await db
+      .from("player_evaluations")
+      .select("*")
+      .eq("club_id", clubId)
+      .eq("season_name", seasonName)
+      .order("player_name", { ascending: true });
+    if (evalErr) { setErrorMsg(evalErr.message); setLoading(false); return; }
+    setEvaluations(data || []);
+    setLoading(false);
+  }, [clubId, seasonName]);
+
+  useEffect(() => { loadForSeason(); }, [loadForSeason]);
+
+  // Whenever the season or player changes, load that player's existing
+  // evaluation for the season if one exists, else start from computed
+  // attendance defaults + a blank form.
+  useEffect(() => {
+    if (!seasonName || !playerName) return;
+    (async () => {
+      const existing = evaluations.find(e => e.player_name === playerName);
+      if (existing) {
+        setForm({
+          evaluationDate: existing.evaluation_date || new Date().toISOString().slice(0, 10),
+          ageGroup: existing.age_group || "",
+          ballSkills: existing.ball_skills == null ? 3 : existing.ball_skills,
+          attacking: existing.attacking == null ? 3 : existing.attacking,
+          defense: existing.defense == null ? 3 : existing.defense,
+          perception: existing.perception == null ? 3 : existing.perception,
+          footwork: existing.footwork == null ? 3 : existing.footwork,
+          skillLevel: existing.skill_level || "Medium",
+          mainPositions: existing.main_positions ? existing.main_positions.split(",").map(s => s.trim()).filter(Boolean) : [],
+          nextSeason: existing.next_season || "Stay",
+          comments: existing.comments || "",
+          trainingAttendance: existing.training_attendance || 0,
+          trainingTotal: existing.training_total || 0,
+          gameAttendance: existing.game_attendance || 0,
+          gameTotal: existing.game_total || 0,
+        });
+        return;
+      }
+      // No saved evaluation yet for this player/season — compute sensible
+      // attendance defaults from real data (same convention as Stats /
+      // Player Report) rather than leaving them at zero.
+      const activeSeason = seasons.find(s => s.name === seasonName);
+      const [gamesRes, sessionsRes] = await Promise.all([
+        db.from("games").select("*").eq("club_id", clubId).eq("season_name", seasonName).eq("is_completed", true).eq("is_bye", false),
+        db.from("training_sessions").select("*").eq("club_id", clubId).eq("season", seasonName),
+      ]);
+      const games = gamesRes.data || [];
+      const sessions = (sessionsRes.data || []).filter(s => !s.is_cancelled);
+      const gameTotal = games.filter(g => (g.players_snapshot || []).some(p => p.name === playerName)).length;
+      const gameAttendance = games.filter(g =>
+        (g.players_snapshot || []).some(p => p.name === playerName) &&
+        (g.player_availability || {})[playerName] !== false
+      ).length;
+      const trainingTotal = sessions.length;
+      const trainingAttendance = sessions.filter(s => (s.attendance || {})[playerName] === true).length;
+      setForm({
+        ...blankForm(),
+        ageGroup: (activeSeason && activeSeason.team_name) || "",
+        trainingAttendance, trainingTotal, gameAttendance, gameTotal,
+      });
+    })();
+  }, [seasonName, playerName, evaluations]);
+
+  function updateField(key, value) {
+    setForm(prev => ({ ...prev, [key]: value }));
+  }
+  function toggleMainPosition(code) {
+    setForm(prev => ({
+      ...prev,
+      mainPositions: prev.mainPositions.includes(code)
+        ? prev.mainPositions.filter(c => c !== code)
+        : [...prev.mainPositions, code],
+    }));
+  }
+
+  async function handleSave() {
+    if (!seasonName || !playerName) return;
+    setSaving(true);
+    setErrorMsg(""); setInfoMsg("");
+    const { error: saveErr } = await db.from("player_evaluations").upsert({
+      club_id: clubId,
+      season_name: seasonName,
+      player_name: playerName,
+      evaluation_date: form.evaluationDate,
+      age_group: form.ageGroup,
+      coach_name: coachName || "",
+      ball_skills: Number(form.ballSkills),
+      attacking: Number(form.attacking),
+      defense: Number(form.defense),
+      perception: Number(form.perception),
+      footwork: Number(form.footwork),
+      skill_level: form.skillLevel,
+      main_positions: form.mainPositions.join(", "),
+      next_season: form.nextSeason,
+      comments: form.comments,
+      training_attendance: Number(form.trainingAttendance) || 0,
+      training_total: Number(form.trainingTotal) || 0,
+      game_attendance: Number(form.gameAttendance) || 0,
+      game_total: Number(form.gameTotal) || 0,
+    }, { onConflict: "club_id,season_name,player_name" });
+    setSaving(false);
+    if (saveErr) { setErrorMsg(saveErr.message); return; }
+    setInfoMsg("Saved evaluation for " + playerName + ".");
+    await loadForSeason();
+  }
+
+  async function handleDelete(evaluation) {
+    if (!window.confirm("Delete the evaluation for " + evaluation.player_name + " (" + seasonName + ")? This can't be undone.")) return;
+    setDeletingId(evaluation.id);
+    setErrorMsg(""); setInfoMsg("");
+    const { error: delErr } = await db.from("player_evaluations").delete().eq("id", evaluation.id).eq("club_id", clubId);
+    setDeletingId(null);
+    if (delErr) { setErrorMsg(delErr.message); return; }
+    setInfoMsg("Deleted evaluation for " + evaluation.player_name + ".");
+    if (evaluation.player_name === playerName) setForm(blankForm());
+    await loadForSeason();
+  }
+
+  const ratingRow = (label, key) => (
+    <div className="session-field" key={key}>
+      <label>{label} (1-5)</label>
+      <input type="range" min="1" max="5" step="1" value={form[key]} onChange={e => updateField(key, e.target.value)} />
+      <span style={{ marginLeft: 8, fontWeight: 700 }}>{form[key]}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="page-header">
+        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
+        <h1 className="page-title">Player Evaluations</h1>
+      </div>
+
+      {seasons.length > 0 && players.length > 0 && (
+        <div className="season-select-row" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <select className="season-select" value={seasonName} onChange={e => setSeasonName(e.target.value)}>
+            {seasons.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+          </select>
+          <select className="season-select" value={playerName} onChange={e => setPlayerName(e.target.value)}>
+            {players.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
+
+      {loading ? (
+        <div className="empty-note">Loading…</div>
+      ) : seasons.length === 0 ? (
+        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
+      ) : players.length === 0 ? (
+        <div className="empty-note">No players on the club roster yet.</div>
+      ) : (
+        <React.Fragment>
+          <div className="session-form" style={{ maxWidth: 560 }}>
+            <div className="session-field">
+              <label>Evaluation Date</label>
+              <input type="date" value={form.evaluationDate} onChange={e => updateField("evaluationDate", e.target.value)} />
+            </div>
+            <div className="session-field">
+              <label>Age Group / Team</label>
+              <input type="text" value={form.ageGroup} onChange={e => updateField("ageGroup", e.target.value)} placeholder="e.g. U15 Violets" />
+            </div>
+
+            {ratingRow("Ball Skills", "ballSkills")}
+            {ratingRow("Attacking", "attacking")}
+            {ratingRow("Defense", "defense")}
+            {ratingRow("Perception", "perception")}
+            {ratingRow("Footwork", "footwork")}
+
+            <div className="session-field">
+              <label>Skill Level</label>
+              <select value={form.skillLevel} onChange={e => updateField("skillLevel", e.target.value)}>
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+              </select>
+            </div>
+
+            <div className="session-field">
+              <label>Main Position(s)</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {COURT_CODES.map(code => (
+                  <label key={code} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                    <input type="checkbox" checked={form.mainPositions.includes(code)} onChange={() => toggleMainPosition(code)} />
+                    {code}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="session-field">
+              <label>Next Season</label>
+              <select value={form.nextSeason} onChange={e => updateField("nextSeason", e.target.value)}>
+                <option value="Stay">Stay</option>
+                <option value="Move Up">Move Up</option>
+                <option value="Leave">Leave</option>
+              </select>
+            </div>
+
+            <div className="session-summary-row" style={{ margin: "8px 0 0 0", padding: 0 }}>
+              <div className="quick-stat">
+                <label>Training Attendance</label>
+                <input type="number" min="0" style={{ width: 60 }} value={form.trainingAttendance} onChange={e => updateField("trainingAttendance", e.target.value)} />
+                {" / "}
+                <input type="number" min="0" style={{ width: 60 }} value={form.trainingTotal} onChange={e => updateField("trainingTotal", e.target.value)} />
+              </div>
+              <div className="quick-stat">
+                <label>Game Attendance</label>
+                <input type="number" min="0" style={{ width: 60 }} value={form.gameAttendance} onChange={e => updateField("gameAttendance", e.target.value)} />
+                {" / "}
+                <input type="number" min="0" style={{ width: 60 }} value={form.gameTotal} onChange={e => updateField("gameTotal", e.target.value)} />
+              </div>
+            </div>
+            <div className="muted-hint" style={{ marginBottom: 8 }}>Attendance figures are pre-filled from actual records — adjust if needed before saving.</div>
+
+            <div className="session-field">
+              <label>Comments</label>
+              <textarea rows={4} value={form.comments} onChange={e => updateField("comments", e.target.value)} />
+            </div>
+
+            <button className="primary" style={{ marginTop: 10, width: "auto" }} disabled={saving} onClick={handleSave}>
+              {saving ? "Saving…" : "Save Evaluation"}
+            </button>
+          </div>
+
+          {evaluations.length > 0 && (
+            <div className="session-form" style={{ maxWidth: 700, marginTop: 10 }}>
+              <div className="muted-hint" style={{ marginBottom: 6 }}>Saved evaluations for {seasonName}:</div>
+              {evaluations.map(ev => (
+                <div key={ev.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>{ev.player_name} — {ev.skill_level}</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="secondary" style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }} onClick={() => setPlayerName(ev.player_name)}>
+                      View / Edit
+                    </button>
+                    <button
+                      className="secondary"
+                      style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
+                      disabled={deletingId === ev.id}
+                      onClick={() => handleDelete(ev)}
+                    >
+                      {deletingId === ev.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
 function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
   const isAdmin = profile.role === "admin";
   const isTeamManager = profile.role === "team_manager";
@@ -3623,7 +4113,7 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
             <NavTile label="Registration" enabled={true} onClick={() => onNavigate("registration")} />
             <NavTile label="Stats" enabled={true} onClick={() => onNavigate("stats")} />
             <NavTile label="Reports" enabled={true} onClick={() => onNavigate("reports")} />
-            <NavTile label="Player Evaluations" enabled={false} />
+            <NavTile label="Player Evaluations" enabled={true} onClick={() => onNavigate("player-evaluations")} />
           </div>
         </React.Fragment>
       )}
@@ -3632,7 +4122,7 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
         <React.Fragment>
           <div className="section-label">Club Admin</div>
           <div className="nav-grid">
-            <NavTile label="Club Settings" enabled={false} />
+            <NavTile label="Club Settings" enabled={true} onClick={() => onNavigate("club-settings")} />
             <NavTile label="Manage Coaches" enabled={true} onClick={() => onNavigate("manage-coaches")} />
             <NavTile label="Load Teams &amp; Players" enabled={true} onClick={() => onNavigate("load-teams-players")} />
           </div>
@@ -3978,6 +4468,24 @@ function App() {
       return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
     }
     return <LoadTeamsPlayersScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
+  }
+  if (screen === "club-settings" && profile) {
+    if (profile.role !== "admin") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return (
+      <ClubSettingsScreen
+        clubId={profile.clubId}
+        onBack={() => goTo("home")}
+        onSaved={({ clubName }) => setProfile(prev => prev ? { ...prev, clubName } : prev)}
+      />
+    );
+  }
+  if (screen === "player-evaluations" && profile) {
+    if (profile.role === "team_manager") {
+      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
+    }
+    return <PlayerEvaluationsScreen clubId={profile.clubId} coachName={profile.displayName || profile.email} onBack={() => goTo("home")} />;
   }
   return <div className="center-screen"><span className="spinner-text">Loading…</span></div>;
 }
