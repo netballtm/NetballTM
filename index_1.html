@@ -2791,7 +2791,7 @@ function ManageCoachesScreen({ clubId, myCoachId, onBack }) {
                 {c.role === "admin" ? (
                   <div className="muted-hint" style={{ marginTop: 8 }}>Sees every team (admin).</div>
                 ) : teams.length === 0 ? (
-                  <div className="muted-hint" style={{ marginTop: 8 }}>No teams set up yet — see Load Teams &amp; Players.</div>
+                  <div className="muted-hint" style={{ marginTop: 8 }}>No teams set up yet — create one from Registration &rarr; "Seasons &amp; Teams".</div>
                 ) : (
                   <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 12 }}>
                     {teams.map(t => {
@@ -2823,59 +2823,177 @@ function ManageCoachesScreen({ clubId, myCoachId, onBack }) {
   );
 }
 
-function LoadTeamsPlayersScreen({ clubId, onBack }) {
-  const [players, setPlayers] = useState([]);
+// Phase 8 (Sept 2026, at Allan's request): team, season, and player
+// creation all live on the Registration screen now (as tabs), instead of
+// being split off into a separate "Load Teams & Players" screen. A brand
+// new team is always created inline, right inside whichever season's team
+// picker you're using — so it's obvious which season it belongs to, not a
+// disconnected "Manage Teams" list somewhere else.
+function TeamPicker({ teams, value, clubId, onChange, onTeamCreated, setErrorMsg }) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleCreate() {
+    const name = newName.trim();
+    if (!name) return;
+    setSaving(true);
+    const { data, error: insertErr } = await db.from("teams").insert({ club_id: clubId, name }).select().single();
+    setSaving(false);
+    if (insertErr) { setErrorMsg(insertErr.message); return; }
+    onTeamCreated(data);
+    onChange(data.id);
+    setNewName("");
+    setCreating(false);
+  }
+
+  if (creating) {
+    return (
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input
+          type="text"
+          autoFocus
+          placeholder="New team name, e.g. U13 Violets"
+          value={newName}
+          onChange={e => setNewName(e.target.value)}
+          style={{ flex: 1, fontSize: 12.5, padding: "3px 6px" }}
+        />
+        <button className="primary" style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }} disabled={saving || !newName.trim()} onClick={handleCreate}>
+          {saving ? "…" : "Create"}
+        </button>
+        <button className="secondary" style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }} onClick={() => { setCreating(false); setNewName(""); }}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={value || ""}
+      style={{ fontSize: 12.5, padding: "3px 6px" }}
+      onChange={e => {
+        if (e.target.value === "__new__") { setCreating(true); return; }
+        onChange(e.target.value || null);
+      }}
+    >
+      <option value="">No team</option>
+      {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+      <option value="__new__">+ New team…</option>
+    </select>
+  );
+}
+
+function RegistrationScreen({ clubId, onBack }) {
+  const [tab, setTab] = useState("register"); // "register" | "seasons" | "players"
   const [seasons, setSeasons] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [seasonId, setSeasonId] = useState("");
+  const [registeredNames, setRegisteredNames] = useState({});
   const [loading, setLoading] = useState(true);
-  const [pasteText, setPasteText] = useState("");
-  const [addingPlayers, setAddingPlayers] = useState(false);
-  const [seasonName, setSeasonName] = useState("");
-  const [addingSeason, setAddingSeason] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [infoMsg, setInfoMsg] = useState("");
+
+  // ── Seasons & Teams tab state ──
+  const [newSeasonName, setNewSeasonName] = useState("");
+  const [newSeasonTeamId, setNewSeasonTeamId] = useState("");
+  const [addingSeason, setAddingSeason] = useState(false);
   const [deletingSeasonId, setDeletingSeasonId] = useState(null);
+  const [savingSeasonTeamId, setSavingSeasonTeamId] = useState(null);
+
+  // ── Club Players tab state ──
+  const [pasteText, setPasteText] = useState("");
+  const [addingPlayers, setAddingPlayers] = useState(false);
   const [deletingPlayerId, setDeletingPlayerId] = useState(null);
 
-  // Phase 8 (Sept 2026): Team is a real entity now (created here or from
-  // Manage Coaches — both write to the same `teams` table). A season picks
-  // an existing team (or "No team yet") instead of typing a free-text
-  // label. team_name is still written alongside team_id, kept in sync,
-  // since other screens (Home, Reports, Player Evaluations) read
-  // season.team_name directly and don't need to change for this.
-  const [teams, setTeams] = useState([]);
-  const [newTeamName, setNewTeamName] = useState("");
-  const [addingTeam, setAddingTeam] = useState(false);
-  const [seasonTeamId, setSeasonTeamId] = useState(""); // team picked for the season being created
-  const [savingSeasonTeamId, setSavingSeasonTeamId] = useState(null); // season.id mid-save, or null
-
   const loadAll = useCallback(async () => {
-    const [playersRes, seasonsRes, teamsRes] = await Promise.all([
-      db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+    setLoading(true);
+    setErrorMsg("");
+    const [seasonsRes, playersRes, teamsRes] = await Promise.all([
       db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
+      db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
       db.from("teams").select("*").eq("club_id", clubId).order("name", { ascending: true }),
     ]);
-    if (playersRes.error) setErrorMsg(playersRes.error.message);
-    else setPlayers(playersRes.data || []);
     if (seasonsRes.error) setErrorMsg(seasonsRes.error.message);
     else setSeasons(seasonsRes.data || []);
+    if (playersRes.error) setErrorMsg(playersRes.error.message);
+    else setPlayers(playersRes.data || []);
     if (teamsRes.error) setErrorMsg(teamsRes.error.message);
     else setTeams(teamsRes.data || []);
+    setSeasonId(prev => {
+      if (prev && (seasonsRes.data || []).some(s => s.id === prev)) return prev;
+      return seasonsRes.data && seasonsRes.data.length > 0 ? seasonsRes.data[0].id : "";
+    });
     setLoading(false);
   }, [clubId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  async function handleAddTeam() {
-    const name = newTeamName.trim();
-    if (!name) return;
-    setAddingTeam(true);
+  const loadRegistrations = useCallback(async () => {
+    if (!seasonId) { setRegisteredNames({}); return; }
+    setErrorMsg("");
+    const { data, error: regErr } = await db
+      .from("registrations")
+      .select("player_name")
+      .eq("club_id", clubId)
+      .eq("season_id", seasonId);
+    if (regErr) { setErrorMsg(regErr.message); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.player_name] = true; });
+    setRegisteredNames(map);
+  }, [clubId, seasonId]);
+
+  useEffect(() => { loadRegistrations(); }, [loadRegistrations]);
+
+  async function toggle(name) {
+    if (saving) return;
+    const isCurrentlyRegistered = !!registeredNames[name];
+    setSaving(true);
+    setErrorMsg("");
+    if (isCurrentlyRegistered) {
+      const { error: delErr } = await db.from("registrations")
+        .delete()
+        .eq("club_id", clubId)
+        .eq("season_id", seasonId)
+        .eq("player_name", name);
+      setSaving(false);
+      if (delErr) { setErrorMsg(delErr.message); return; }
+      setRegisteredNames(prev => { const next = { ...prev }; delete next[name]; return next; });
+    } else {
+      // Deliberately does NOT write season_index — that legacy column caused
+      // the original registrations ambiguity (see project notes), and its own
+      // NOT NULL constraint (since dropped) was the root cause of a real
+      // data-loss incident. season_id is the only column this ever writes.
+      const { error: insErr } = await db.from("registrations").insert({
+        club_id: clubId,
+        season_id: seasonId,
+        player_name: name,
+      });
+      setSaving(false);
+      if (insErr) { setErrorMsg(insErr.message); return; }
+      setRegisteredNames(prev => ({ ...prev, [name]: true }));
+    }
+  }
+
+  async function handleAddSeason() {
+    if (!newSeasonName.trim()) return;
+    setAddingSeason(true);
     setErrorMsg(""); setInfoMsg("");
-    const { error: insertErr } = await db.from("teams").insert({ club_id: clubId, name });
-    setAddingTeam(false);
+    const team = newSeasonTeamId ? teams.find(t => t.id === newSeasonTeamId) : null;
+    const { data, error: insertErr } = await db.from("seasons").insert({
+      name: newSeasonName.trim(),
+      team_id: newSeasonTeamId || null,
+      team_name: team ? team.name : null,
+      club_id: clubId,
+    }).select().single();
+    setAddingSeason(false);
     if (insertErr) { setErrorMsg(insertErr.message); return; }
-    setInfoMsg("Added team \"" + name + "\".");
-    setNewTeamName("");
-    await loadAll();
+    setInfoMsg("Added season \"" + newSeasonName.trim() + "\".");
+    setNewSeasonName(""); setNewSeasonTeamId("");
+    setSeasons(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setSeasonId(prev => prev || data.id);
   }
 
   // Sets (or clears) which team an existing season belongs to. Keeps the
@@ -2894,62 +3012,9 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
     setSeasons(prev => prev.map(s => s.id === season.id ? { ...s, team_id: teamId || null, team_name: team ? team.name : null } : s));
   }
 
-  async function handleAddPlayers() {
-    const names = pasteText.split("\n").map(n => n.trim()).filter(n => n.length > 0);
-    if (names.length === 0) return;
-    setAddingPlayers(true);
-    setErrorMsg(""); setInfoMsg("");
-
-    const existingLower = new Set(players.map(p => p.name.toLowerCase()));
-    const seenThisBatch = new Set();
-    const toInsert = [];
-    const skipped = [];
-    names.forEach(name => {
-      const lower = name.toLowerCase();
-      if (existingLower.has(lower) || seenThisBatch.has(lower)) { skipped.push(name); return; }
-      seenThisBatch.add(lower);
-      toInsert.push({ name, club_id: clubId, is_default_fill_in: false });
-    });
-
-    if (toInsert.length === 0) {
-      setInfoMsg("Nothing to add — every name pasted is already a player.");
-      setAddingPlayers(false);
-      return;
-    }
-
-    const { error: insertErr } = await db.from("players").insert(toInsert);
-    setAddingPlayers(false);
-    if (insertErr) { setErrorMsg(insertErr.message); return; }
-
-    setInfoMsg(
-      "Added " + toInsert.length + " player" + (toInsert.length === 1 ? "" : "s") + "." +
-      (skipped.length ? " Skipped " + skipped.length + " already on the roster: " + skipped.join(", ") + "." : "")
-    );
-    setPasteText("");
-    await loadAll();
-  }
-
-  async function handleAddSeason() {
-    if (!seasonName.trim()) return;
-    setAddingSeason(true);
-    setErrorMsg(""); setInfoMsg("");
-    const team = seasonTeamId ? teams.find(t => t.id === seasonTeamId) : null;
-    const { error: insertErr } = await db.from("seasons").insert({
-      name: seasonName.trim(),
-      team_id: seasonTeamId || null,
-      team_name: team ? team.name : null,
-      club_id: clubId,
-    });
-    setAddingSeason(false);
-    if (insertErr) { setErrorMsg(insertErr.message); return; }
-    setInfoMsg("Added season \"" + seasonName.trim() + "\".");
-    setSeasonName(""); setSeasonTeamId("");
-    await loadAll();
-  }
-
   // Deleting a season is only allowed once nothing references it any more —
-  // games/training/registrations are checked first rather than cascading,
-  // so a season's history can never be silently wiped by one click. If the
+  // games/training/registrations are checked first rather than cascading, so
+  // a season's history can never be silently wiped by one click. If the
   // season really does need to go, the linked games/sessions/registrations
   // have to be removed first (or, for games, via Delete Game on Game
   // History / Upcoming Games).
@@ -2958,14 +3023,11 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
     // Real incident, Sept 2026: this check originally missed
     // player_evaluations entirely, because Android can store an
     // evaluation's season_name as several season names joined together
-    // (e.g. "Grading Winter 2026, Winter 2026") rather than one exact
-    // match — so a season whose only remaining link was an evaluation like
-    // that would sail through this guard undetected. It turned out fine
-    // that time (the evaluation data itself was untouched — only the
-    // season's own row went missing, breaking the picker), but the guard
-    // should actually catch this rather than rely on being lucky again.
-    // See evaluationCoversSeason for the same compound-name matching used
-    // by the Player Evaluations / Evaluations report screens.
+    // (e.g. "Grading Winter 2026, Winter 2026") rather than one exact match
+    // — so a season whose only remaining link was an evaluation like that
+    // would sail through this guard undetected. See evaluationCoversSeason
+    // for the same compound-name matching used by the Player Evaluations /
+    // Evaluations report screens.
     const [gamesRes, trainingRes, regRes, evalRes] = await Promise.all([
       db.from("games").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season_name", season.name),
       db.from("training_sessions").select("id", { count: "exact", head: true }).eq("club_id", clubId).eq("season", season.name),
@@ -2993,15 +3055,50 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
     setDeletingSeasonId(null);
     if (delErr) { setErrorMsg(delErr.message); return; }
     setInfoMsg("Deleted season \"" + season.name + "\".");
-    await loadAll();
+    setSeasons(prev => prev.filter(s => s.id !== season.id));
+    setSeasonId(prev => prev === season.id ? "" : prev);
+  }
+
+  async function handleAddPlayers() {
+    const names = pasteText.split("\n").map(n => n.trim()).filter(n => n.length > 0);
+    if (names.length === 0) return;
+    setAddingPlayers(true);
+    setErrorMsg(""); setInfoMsg("");
+
+    const existingLower = new Set(players.map(p => p.name.toLowerCase()));
+    const seenThisBatch = new Set();
+    const toInsert = [];
+    const skipped = [];
+    names.forEach(name => {
+      const lower = name.toLowerCase();
+      if (existingLower.has(lower) || seenThisBatch.has(lower)) { skipped.push(name); return; }
+      seenThisBatch.add(lower);
+      toInsert.push({ name, club_id: clubId, is_default_fill_in: false });
+    });
+
+    if (toInsert.length === 0) {
+      setInfoMsg("Nothing to add — every name pasted is already a player.");
+      setAddingPlayers(false);
+      return;
+    }
+
+    const { data, error: insertErr } = await db.from("players").insert(toInsert).select();
+    setAddingPlayers(false);
+    if (insertErr) { setErrorMsg(insertErr.message); return; }
+
+    setInfoMsg(
+      "Added " + toInsert.length + " player" + (toInsert.length === 1 ? "" : "s") + "." +
+      (skipped.length ? " Skipped " + skipped.length + " already on the roster: " + skipped.join(", ") + "." : "")
+    );
+    setPasteText("");
+    setPlayers(prev => [...prev, ...(data || [])].sort((a, b) => a.name.localeCompare(b.name)));
   }
 
   // Removing a player deletes their registrations, notes and evaluations
   // (nothing left dangling), but deliberately does NOT touch past games —
   // each completed game already stores its own players_snapshot/goals
   // independently, so historical results and stats stay exactly as they
-  // were. This mirrors how the app already treats games as a permanent
-  // record rather than a live join to the players table.
+  // were.
   async function handleDeletePlayer(player) {
     setErrorMsg(""); setInfoMsg("");
     if (!window.confirm("Remove " + player.name + " from the roster? Their registrations, notes and evaluations will be deleted. Past game results/goals already recorded for them are kept as-is.")) return;
@@ -3017,208 +3114,8 @@ function LoadTeamsPlayersScreen({ clubId, onBack }) {
     setDeletingPlayerId(null);
     if (delErr) { setErrorMsg(delErr.message); return; }
     setInfoMsg("Removed " + player.name + " from the roster. Past game history is unaffected.");
-    await loadAll();
-  }
-
-  return (
-    <div>
-      <div className="page-header">
-        <a className="back-link" onClick={onBack}>&larr; Back to Home</a>
-        <h1 className="page-title">Load Teams &amp; Players</h1>
-      </div>
-
-      {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
-      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
-
-      <div className="session-form" style={{ maxWidth: 560 }}>
-        <div className="session-field">
-          <label>Add Players</label>
-          <textarea
-            rows={8}
-            placeholder={"Paste one player name per line, e.g.\nAddison Daly\nAlly Turner\nEllie Hatzis"}
-            value={pasteText}
-            onChange={e => setPasteText(e.target.value)}
-          />
-          <div className="muted-hint">
-            Names already on the club's player list are skipped automatically — safe to paste the same list twice.
-            {!loading && " Currently " + players.length + " player" + (players.length === 1 ? "" : "s") + " on the roster."}
-          </div>
-        </div>
-        <div style={{ margin: "12px 0 28px 0" }}>
-          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingPlayers || !pasteText.trim()} onClick={handleAddPlayers}>
-            {addingPlayers ? "Adding…" : "Add Players"}
-          </button>
-        </div>
-
-        {!loading && players.length > 0 && (
-          <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20, marginBottom: 28 }}>
-            <div className="muted-hint" style={{ marginBottom: 6 }}>Current players ({players.length}):</div>
-            {players.map(p => (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
-                <span>{p.name}</span>
-                <button
-                  className="secondary"
-                  style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
-                  disabled={deletingPlayerId === p.id}
-                  onClick={() => handleDeletePlayer(p)}
-                >
-                  {deletingPlayerId === p.id ? "Removing…" : "Remove"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20 }}>
-          <div className="session-field">
-            <label>Manage Teams</label>
-            <div className="muted-hint" style={{ marginBottom: 8 }}>
-              A team (e.g. "U15 Violets", "U13 Violets") persists across seasons — create it once, then pick it for whichever seasons belong to it below. Teams created here are the same ones assignable to coaches on Manage Coaches.
-            </div>
-            {teams.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                {teams.map(t => (
-                  <div key={t.id} style={{ fontSize: 13.5, padding: "3px 0" }}>• {t.name}</div>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="text"
-                placeholder="New team name, e.g. U13 Violets"
-                value={newTeamName}
-                onChange={e => setNewTeamName(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingTeam || !newTeamName.trim()} onClick={handleAddTeam}>
-                {addingTeam ? "Adding…" : "Add Team"}
-              </button>
-            </div>
-          </div>
-
-          <div className="session-field" style={{ marginTop: 20 }}>
-            <label>Add a Season</label>
-            <input type="text" placeholder="Season name, e.g. Winter 2027" value={seasonName} onChange={e => setSeasonName(e.target.value)} />
-          </div>
-          <div className="session-field">
-            <label>Team (optional — can be set or changed later)</label>
-            <select value={seasonTeamId} onChange={e => setSeasonTeamId(e.target.value)}>
-              <option value="">No team yet</option>
-              {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingSeason || !seasonName.trim()} onClick={handleAddSeason}>
-            {addingSeason ? "Adding…" : "Add Season"}
-          </button>
-
-          {!loading && seasons.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <div className="muted-hint" style={{ marginBottom: 6 }}>Existing seasons:</div>
-              {seasons.map(s => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "4px 0", gap: 8 }}>
-                  <span>{s.name}</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <select
-                      value={s.team_id || ""}
-                      disabled={savingSeasonTeamId === s.id}
-                      onChange={e => handleChangeSeasonTeam(s, e.target.value)}
-                      style={{ fontSize: 12.5, padding: "3px 6px" }}
-                    >
-                      <option value="">No team</option>
-                      {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                    <button
-                      className="secondary"
-                      style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
-                      disabled={deletingSeasonId === s.id}
-                      onClick={() => handleDeleteSeason(s)}
-                    >
-                      {deletingSeasonId === s.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RegistrationScreen({ clubId, onBack }) {
-  const [seasons, setSeasons] = useState([]);
-  const [seasonId, setSeasonId] = useState("");
-  const [players, setPlayers] = useState([]);
-  const [registeredNames, setRegisteredNames] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  useEffect(() => {
-    (async () => {
-      const [seasonsRes, playersRes] = await Promise.all([
-        db.from("seasons").select("*").eq("club_id", clubId).order("name", { ascending: true }),
-        db.from("players").select("*").eq("club_id", clubId).order("name", { ascending: true }),
-      ]);
-      if (seasonsRes.error) { setErrorMsg(seasonsRes.error.message); setLoading(false); return; }
-      if (playersRes.error) { setErrorMsg(playersRes.error.message); setLoading(false); return; }
-      setSeasons(seasonsRes.data || []);
-      setPlayers(playersRes.data || []);
-      if (seasonsRes.data && seasonsRes.data.length > 0) setSeasonId(seasonsRes.data[0].id);
-      else setLoading(false);
-    })();
-  }, [clubId]);
-
-  const loadRegistrations = useCallback(async () => {
-    if (!seasonId) return;
-    setLoading(true);
-    setErrorMsg("");
-    const { data, error: regErr } = await db
-      .from("registrations")
-      .select("player_name")
-      .eq("club_id", clubId)
-      .eq("season_id", seasonId);
-    if (regErr) { setErrorMsg(regErr.message); setLoading(false); return; }
-    const map = {};
-    (data || []).forEach(r => { map[r.player_name] = true; });
-    setRegisteredNames(map);
-    setLoading(false);
-  }, [clubId, seasonId]);
-
-  useEffect(() => { loadRegistrations(); }, [loadRegistrations]);
-
-  async function toggle(name) {
-    if (saving) return;
-    const isCurrentlyRegistered = !!registeredNames[name];
-    setSaving(true);
-    setErrorMsg("");
-    if (isCurrentlyRegistered) {
-      const { error: delErr } = await db.from("registrations")
-        .delete()
-        .eq("club_id", clubId)
-        .eq("season_id", seasonId)
-        .eq("player_name", name);
-      setSaving(false);
-      if (delErr) { setErrorMsg(delErr.message); return; }
-      setRegisteredNames(prev => { const next = { ...prev }; delete next[name]; return next; });
-    } else {
-      // Deliberately does NOT write season_index — that legacy column is what
-      // caused the original registrations ambiguity (see project notes) and
-      // writing a guessed value into it here would just recreate the same
-      // problem for new rows. If this insert fails because season_index turns
-      // out to be a NOT NULL column with no default, the fix is a one-line
-      // `ALTER TABLE registrations ALTER COLUMN season_index DROP NOT NULL;`
-      // in the Supabase SQL Editor, not filling it in with a made-up value.
-      const { error: insErr } = await db.from("registrations").insert({
-        club_id: clubId,
-        season_id: seasonId,
-        player_name: name,
-      });
-      setSaving(false);
-      if (insErr) { setErrorMsg(insErr.message); return; }
-      setRegisteredNames(prev => ({ ...prev, [name]: true }));
-    }
+    setPlayers(prev => prev.filter(p => p.id !== player.id));
+    setRegisteredNames(prev => { const next = { ...prev }; delete next[player.name]; return next; });
   }
 
   const activeSeason = seasons.find(s => s.id === seasonId);
@@ -3231,36 +3128,141 @@ function RegistrationScreen({ clubId, onBack }) {
         <h1 className="page-title">Registration</h1>
       </div>
 
-      {seasons.length > 1 && (
-        <div className="season-select-row">
-          <select className="season-select" value={seasonId} onChange={e => setSeasonId(e.target.value)}>
-            {seasons.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-      )}
-
-      {!loading && activeSeason && (
-        <div className="session-summary-row">
-          <div className="quick-stat"><label>Registered</label>{registeredCount} / {players.length}</div>
-          {activeSeason.team_name && <div className="quick-stat"><label>Team</label>{activeSeason.team_name}</div>}
-        </div>
-      )}
-
       {errorMsg && <div className="banner error" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{errorMsg}</div>}
+      {infoMsg && <div className="banner info" style={{ maxWidth: 900, margin: "14px auto 0 auto" }}>{infoMsg}</div>}
 
-      {loading ? (
-        <div className="empty-note">Loading…</div>
-      ) : seasons.length === 0 ? (
-        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
-      ) : players.length === 0 ? (
-        <div className="empty-note">No players on the club roster yet — add some under "Load Teams &amp; Players".</div>
-      ) : (
+      <div className="quarter-tabs">
+        <button className={"quarter-tab" + (tab === "register" ? " active" : "")} onClick={() => setTab("register")}>Register Players</button>
+        <button className={"quarter-tab" + (tab === "seasons" ? " active" : "")} onClick={() => setTab("seasons")}>Seasons &amp; Teams</button>
+        <button className={"quarter-tab" + (tab === "players" ? " active" : "")} onClick={() => setTab("players")}>Club Players</button>
+      </div>
+
+      {tab === "register" && (
+        <React.Fragment>
+          {seasons.length > 1 && (
+            <div className="season-select-row">
+              <select className="season-select" value={seasonId} onChange={e => setSeasonId(e.target.value)}>
+                {seasons.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          {!loading && activeSeason && (
+            <div className="session-summary-row">
+              <div className="quick-stat"><label>Registered</label>{registeredCount} / {players.length}</div>
+              <div className="quick-stat"><label>Team</label>{activeSeason.team_name || "No team assigned"}</div>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="empty-note">Loading…</div>
+          ) : seasons.length === 0 ? (
+            <div className="empty-note">No seasons set up yet — add one under the "Seasons &amp; Teams" tab above.</div>
+          ) : players.length === 0 ? (
+            <div className="empty-note">No players on the club roster yet — add some under the "Club Players" tab above.</div>
+          ) : (
+            <div className="session-form" style={{ maxWidth: 560 }}>
+              <RosterToggleList
+                players={players.map(p => p.name)}
+                selected={registeredNames}
+                onToggle={toggle}
+              />
+            </div>
+          )}
+        </React.Fragment>
+      )}
+
+      {tab === "seasons" && (
         <div className="session-form" style={{ maxWidth: 560 }}>
-          <RosterToggleList
-            players={players.map(p => p.name)}
-            selected={registeredNames}
-            onToggle={toggle}
-          />
+          <div className="session-field">
+            <label>Add a Season</label>
+            <input type="text" placeholder="Season name, e.g. Winter 2027" value={newSeasonName} onChange={e => setNewSeasonName(e.target.value)} />
+          </div>
+          <div className="session-field">
+            <label>Team — pick an existing one, or create a new one right here for this season</label>
+            <TeamPicker
+              teams={teams}
+              value={newSeasonTeamId}
+              clubId={clubId}
+              onChange={setNewSeasonTeamId}
+              onTeamCreated={t => setTeams(prev => [...prev, t].sort((a, b) => a.name.localeCompare(b.name)))}
+              setErrorMsg={setErrorMsg}
+            />
+          </div>
+          <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingSeason || !newSeasonName.trim()} onClick={handleAddSeason}>
+            {addingSeason ? "Adding…" : "Add Season"}
+          </button>
+
+          {!loading && seasons.length > 0 && (
+            <div style={{ marginTop: 22, borderTop: "1px solid var(--border)", paddingTop: 18 }}>
+              <div className="muted-hint" style={{ marginBottom: 8 }}>
+                Existing seasons — change a season's team at any time, right here (a team can also be created inline from this dropdown):
+              </div>
+              {seasons.map(s => (
+                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "6px 0", gap: 8, borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ flex: 1 }}>{s.name}</span>
+                  <TeamPicker
+                    teams={teams}
+                    value={s.team_id || ""}
+                    clubId={clubId}
+                    onChange={teamId => handleChangeSeasonTeam(s, teamId)}
+                    onTeamCreated={t => setTeams(prev => [...prev, t].sort((a, b) => a.name.localeCompare(b.name)))}
+                    setErrorMsg={setErrorMsg}
+                  />
+                  <button
+                    className="secondary"
+                    style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
+                    disabled={deletingSeasonId === s.id || savingSeasonTeamId === s.id}
+                    onClick={() => handleDeleteSeason(s)}
+                  >
+                    {deletingSeasonId === s.id ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "players" && (
+        <div className="session-form" style={{ maxWidth: 560 }}>
+          <div className="session-field">
+            <label>Add Players</label>
+            <textarea
+              rows={8}
+              placeholder={"Paste one player name per line, e.g.\nAddison Daly\nAlly Turner\nEllie Hatzis"}
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+            />
+            <div className="muted-hint">
+              Names already on the club's player list are skipped automatically — safe to paste the same list twice.
+              {!loading && " Currently " + players.length + " player" + (players.length === 1 ? "" : "s") + " on the roster."}
+            </div>
+          </div>
+          <div style={{ margin: "12px 0 28px 0" }}>
+            <button className="primary" style={{ marginTop: 0, width: "auto" }} disabled={addingPlayers || !pasteText.trim()} onClick={handleAddPlayers}>
+              {addingPlayers ? "Adding…" : "Add Players"}
+            </button>
+          </div>
+
+          {!loading && players.length > 0 && (
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 20 }}>
+              <div className="muted-hint" style={{ marginBottom: 6 }}>Current players ({players.length}):</div>
+              {players.map(p => (
+                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13.5, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span>{p.name}</span>
+                  <button
+                    className="secondary"
+                    style={{ marginTop: 0, width: "auto", padding: "3px 10px", fontSize: 12 }}
+                    disabled={deletingPlayerId === p.id}
+                    onClick={() => handleDeletePlayer(p)}
+                  >
+                    {deletingPlayerId === p.id ? "Removing…" : "Remove"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -3268,6 +3270,7 @@ function RegistrationScreen({ clubId, onBack }) {
 }
 
 function StatsScreen({ clubId, onBack }) {
+
   const [seasons, setSeasons] = useState([]);
   const [seasonName, setSeasonName] = useState("");
   const [tab, setTab] = useState("games");
@@ -4362,7 +4365,7 @@ function ReportsScreen({ clubId, clubName, onBack }) {
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : seasons.length === 0 ? (
-        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
+        <div className="empty-note">No seasons set up yet — add one under Registration &rarr; "Seasons &amp; Teams".</div>
       ) : tab === "season" ? (
         <SeasonReportView clubId={clubId} clubName={clubName} seasons={seasons} clubSettings={clubSettings} />
       ) : tab === "game" ? (
@@ -4384,7 +4387,7 @@ function ReportsScreen({ clubId, clubName, onBack }) {
 // still always set to the caller's real club_id here on every save.
 // club_settings INSERT/UPDATE is admin-only at the RLS level (see
 // Permission levels / roles section), so this screen is admin-gated the
-// same way Manage Coaches / Load Teams & Players are.
+// same way Manage Coaches is.
 function ClubSettingsScreen({ clubId, onBack, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -4765,7 +4768,7 @@ function PlayerEvaluationsScreen({ clubId, coachName, onBack }) {
       {loading ? (
         <div className="empty-note">Loading…</div>
       ) : seasons.length === 0 ? (
-        <div className="empty-note">No seasons set up yet — add one under "Load Teams &amp; Players".</div>
+        <div className="empty-note">No seasons set up yet — add one under Registration &rarr; "Seasons &amp; Teams".</div>
       ) : players.length === 0 ? (
         <div className="empty-note">No players on the club roster yet.</div>
       ) : (
@@ -5020,7 +5023,6 @@ function HomeScreen({ profile, onLogout, onNavigate, onQuickTraining }) {
           <div className="nav-grid">
             <NavTile label="Club Settings" enabled={true} onClick={() => onNavigate("club-settings")} />
             <NavTile label="Manage Coaches" enabled={true} onClick={() => onNavigate("manage-coaches")} />
-            <NavTile label="Load Teams &amp; Players" enabled={true} onClick={() => onNavigate("load-teams-players")} />
           </div>
         </React.Fragment>
       )}
@@ -5358,12 +5360,6 @@ function App() {
       return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
     }
     return <ManageCoachesScreen clubId={profile.clubId} myCoachId={profile.id} onBack={() => goTo("home")} />;
-  }
-  if (screen === "load-teams-players" && profile) {
-    if (profile.role !== "admin") {
-      return <HomeScreen profile={profile} onLogout={handleLogout} onNavigate={goTo} onQuickTraining={() => openTrainingSession(null, "home")} />;
-    }
-    return <LoadTeamsPlayersScreen clubId={profile.clubId} onBack={() => goTo("home")} />;
   }
   if (screen === "club-settings" && profile) {
     if (profile.role !== "admin") {
